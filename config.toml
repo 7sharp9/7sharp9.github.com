@@ -6,6 +6,11 @@ copyright = "Dave Thomas"
 disqusShortname = "7sharp9"
 googleAnalytics = "UA-10152365-8"
 
+[Privacy.googleAnalytics]
+    anonymizeIP = true
+    respectDoNotTrack = true
+    useSessionStorage = false
+
 [Author]
     name = "Dave Thomas"
 
@@ -13,18 +18,30 @@ googleAnalytics = "UA-10152365-8"
     tag = "tags"
 
 [Params]
+    mainSections = ["post"]
     intro = true
     headline = "7sharp9"
     description = "A blog written by Dave Thomas featuring software development and other musings."
     github = "https://github.com/7sharp9"
-    # gitlab = "https://gitlab.com/7sharp9"
+    gitlab = "https://gitlab.com/7sharp9"
     linkedin = "https://linkedin.com/in/dave-thomas-73636221/"
     twitter = "https://twitter.com/7sharp9_exhumed"
     stackoverflow = "http://stackoverflow.com/users/607275/7sharp9"
-    email = "kukulcanenator@gmail.com"
-    skype = "7sharpnine"
+    email = "7sharp9@mail.com"
+    opengraph = true
+    shareTwitter = true
+    shareFacebook = true
+    shareGooglePlus = false
+    shareLinkedIn = false
+    dateFormat = "Mon, Jan 2, 2006"
     highlightjs = "tomorrow-night"
     highlightjs_extra_languages = ["fsharp"]
+    exponeaJsUrl = ""
+    exponeaTarget = ""
+    exponeaToken = ""
+    exponeaTrackVisits = false
+    readingTime = true
+    readingTimeText = "Estimated reading time:"
 
 [Permalinks]
     post = "/:year/:month/:day/:filename/"
