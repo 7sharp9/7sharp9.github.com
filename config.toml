@@ -1,10 +1,12 @@
-baseurl = "https://7sharp9.github.io/"
+baseurl = "https://7sharp9.dev/"
 title = "7sharp9"
-theme = "ghostwriter"
+theme = "Vec"
 languageCode = "en-us"
 copyright = "Dave Thomas"
 disqusShortname = "7sharp9"
 googleAnalytics = "UA-10152365-8"
+enableRobotsTXT = true
+paginate = 15
 
 [Privacy.googleAnalytics]
     anonymizeIP = true
@@ -16,43 +18,44 @@ googleAnalytics = "UA-10152365-8"
 
 [Taxonomies]
     tag = "tags"
+    series = "series"
+    category = "categories"
 
 [Params]
-    mainSections = ["post"]
-    intro = true
-    headline = "7sharp9"
-    description = "A blog written by Dave Thomas featuring software development and other musings."
-    github = "https://github.com/7sharp9"
-    gitlab = "https://gitlab.com/7sharp9"
-    linkedin = "https://linkedin.com/in/dave-thomas-73636221/"
-    twitter = "https://twitter.com/7sharp9_exhumed"
-    stackoverflow = "http://stackoverflow.com/users/607275/7sharp9"
-    email = "7sharp9@mail.com"
+    Description = "A blog by Dave Thomas (7sharp9) featuring programming, running, painting."
+    SelfIntro = "A cup of tea would restore my normality. - Douglas Adams"
+    githubid = "7sharp9"
+    gitlab = "7sharp9"
+    LinkedInID = "dave-thomas-73636221"
+    twitterid = "7sharp9_"
+    stackoverflowid = "http://stackoverflow.com/users/607275/7sharp9"
+    Email = "7sharp9@mail.com"
+    YouTubeId = "7sharp9b5"
     opengraph = true
-    shareTwitter = true
-    shareFacebook = true
-    shareGooglePlus = false
-    shareLinkedIn = false
     dateFormat = "Mon, Jan 2, 2006"
-    highlightjs = "tomorrow-night"
-    highlightjs_extra_languages = ["fsharp"]
-    exponeaJsUrl = ""
-    exponeaTarget = ""
-    exponeaToken = ""
-    exponeaTrackVisits = false
-    readingTime = true
-    readingTimeText = "Estimated reading time:"
+    author = "7sharp9"
+    rss = true
+    avatar = "/img/cup_of_tea.jpg"
+    keywords = "programming, running, painting, guitar, F#, Rust, Swift, Kotlin, Elixir, TypeScript, C#, dotnet"
+    
+
 
 [Permalinks]
     post = "/:year/:month/:day/:filename/"
 
-
 [[menu.main]]
-    name = "Blog"
-    url = "/"
-    weight = 1
-
+  name = "About"
+  url  = "/about"
+  weight = 1
 [[menu.main]]
-    name = "About"
-    url = "/page/about/"
-    weight = 2
+  name = "F#"
+  url  = "/FSharp"
+  weight = 2
+[[menu.main]]
+  name = "Running"
+  url  = "/Running"
+  weight = 3
+[[menu.main]]
+  name = "Elm"
+  url  = "/Elm"
+  weight = 4
