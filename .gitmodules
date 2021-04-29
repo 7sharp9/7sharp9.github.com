@@ -1,0 +1,3 @@
+[submodule "themes/hugo-theme-vec"]
+	path = themes/hugo-theme-vec
+	url = https://github.com/7sharp9/hugo-theme-vec.git
