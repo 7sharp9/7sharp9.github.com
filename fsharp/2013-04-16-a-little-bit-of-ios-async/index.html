@@ -1,0 +1,80 @@
+<!doctype html><html><head><title>A little bit of iOS async &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/2013-04-16-a-little-bit-of-ios-async/>A little bit of iOS async</a></h1><span class=post-date>Apr 16, 2013</span><div class=post-content><p>I was going to title this post as &lsquo;Now for something completely different&rsquo; but felt that a little bit too <a href=http://en.wiktionary.org/wiki/Pythonesque>Pythonesque</a>, and when I thought about it a bit it isn&rsquo;t really completely just slightly different, namely C# rather than my usual F# posts.</p><p>Right, enough of the waffling, this post is a little tour into the relatively unknown area of async on iOS. Xamarin announced the alpha preview of async await on March 11th this year (2013). There are a couple of blog post floating around on the net if you look around, Rodrigo Kumpera posted a small example <a href=http://blog.xamarin.com/brave-new-async-mobile-world/>here</a>.</p><p>I&rsquo;m no stranger to async, I have spent a great deal of time over the years debugging and refining <a href=http://msdn.microsoft.com/en-GB/library/system.iasyncresult.aspx>IAsyncResult</a> style procedures and found Jeffrey Richter and Joe Duffy&rsquo;s books below to be an excellent reference for those interested.</p><p></p><p>If you looking for a book on TPL/parallel programming then Parallel Programming with Microsoft .NET by Stephen Toub et al. is also a good read.</p><p></p><p>Anyway, enough of the book references lets look at an iOS example of async using the <a href=https://github.com/xamarin/monotouch-samples>MonoTouch samples</a> from Xamarin as a reference.</p><p>We are going to use the <a href=https://github.com/xamarin/monotouch-samples/tree/master/HttpClient>HttpSample</a>. Its a relatively simple example that has several buttons which trigger an asynchronous request for data, when the data is returned it&rsquo;s simply rendered onto the screen.</p><p>Lets look at the first asynchronous call in the <a href=https://github.com/xamarin/monotouch-samples/blob/master/HttpClient/DotNet.cs>DotNet.cs</a> file, the <code>HttpSample</code> method:</p><pre><code>// Asynchronous HTTP request
+public void HttpSample ()
+{
+	Application.Busy ();
+	var request = WebRequest.Create (Application.WisdomUrl);
+	request.BeginGetResponse (FeedDownloaded, request);
+}
+
+// Invoked when we get the stream back from the twitter feed
+// We parse the RSS feed and push the data into a table.
+void FeedDownloaded (IAsyncResult result)
+{
+	Application.Done ();
+	var request = result.AsyncState as HttpWebRequest;
+	
+	try {
+    		var response = request.EndGetResponse (result);
+		    ad.RenderRssStream (response.GetResponseStream ());
+	} catch {
+		// Error				
+	}
+}
+</code></pre><p>To convert this to the async await style all we have to do is use the async and await keywords (surprise surprise!), and in this instance use the new <strong>Async</strong> suffixed methods on the <code>WebRequest</code> class.</p><pre><code>// Asynchronous HTTP request
+public async void HttpSample ()
+{
+	Application.Busy ();
+	var request = WebRequest.Create (Application.WisdomUrl);
+
+	//async await version
+	try{
+		var response = await request.GetResponseAsync();
+		Application.Done ();
+	    ad.RenderRssStream(response.GetResponseStream());
+	} catch {
+		// Error
+	}
+}
+</code></pre><p>As you can see the <code>request.BeginGetResponse</code> method has been changed to <code>await request.GetResponseAsync()</code> and the callback method <code>FeedDownloaded</code> which was passed into the <code>BeginGetRespose</code> method has now been assimilated into the <code>HttpSample</code> method. The await keyword is acting as a wait point or suspension while the asynchronous method completes. As soon the asynchronous call completes then processing continues to the line below, much in the same way that the callback code is executed in the IAsyncResult version. For an in depth description then you can take a look at the <a href=http://msdn.microsoft.com/en-gb/library/vstudio/hh191443.aspx>MSDN documentation</a> on the subject.</p><p>You could add a WebException to the catch block here, you would expect on situations like network outage which would result in DNS lookup failures from the async call.</p><p>We can look at the next asynchronous method too the &lsquo;HttpSecureSample&rsquo; method</p><pre><code>// Asynchornous HTTPS request
+public void HttpSecureSample ()
+{
+	var https = (HttpWebRequest) WebRequest.Create (&quot;https://gmail.com&quot;);
+
+	// To not depend on the root certficates, we will accept any certificates:
+	ServicePointManager.ServerCertificateValidationCallback = (sender, cert, chain, ssl) =&gt;  true;
+
+	https.BeginGetResponse (GmailDownloaded, https);
+}
+
+// This sample just gets the result from calling https://gmail.com, an HTTPS secure 
+// connection, we do not attempt to parse the output, but merely dump it as text
+void GmailDownloaded (IAsyncResult result)
+{
+	Application.Done ();
+	var request = result.AsyncState as HttpWebRequest;
+
+	try {
+    		var response = request.EndGetResponse (result);
+		    ad.RenderStream (response.GetResponseStream ());
+	} catch {
+		// Error
+	}
+}
+</code></pre><p>Lets have a look at the async await version of that:</p><pre><code>// Asynchornous HTTPS request
+public async void HttpSecureSample ()
+{
+	var https = (HttpWebRequest) WebRequest.Create (&quot;https://gmail.com&quot;);
+
+	// To not depend on the root certficates, we will accept any certificates:
+	ServicePointManager.ServerCertificateValidationCallback = (sender, cert, chain, ssl) =&gt;  true;
+
+    try {
+			var response = await https.GetResponseAsync();
+			Application.Done ();
+			ad.RenderRssStream (response.GetResponseStream ());
+	} catch {
+		// Error
+	}
+}
+</code></pre><p>In this situation there was also a version of the IAsyncResult Begin/End pattern that had been converted to async - <code>https.GetResponseAsync()</code> and we also had to add the <code>async</code> keyword to the <code>HttpSecureSample</code> method.</p><p>For the situations where there is no <strong>Async</strong> suffixed method available you can build your own using the <a href=http://msdn.microsoft.com/en-us/library/system.threading.tasks.taskfactory.fromasync.aspx>Task.Factory.FromAsync</a> methods. I wont go into the details of that here but if anyone wants any information on that then just give me a shout and I can revisit in in a future post.</p><p>Ah yes, I almost forgot, there are some common pitfalls of using async await and Tomas Petricek posted a good compilation of them the other day: <a href=http://tomasp.net/blog/csharp-async-gotchas.aspx>C# async gotchas</a>.</p><p>Until next time!</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/2013-02-04-monotouch-and-fsharp-part-ii/>MonoTouch and F# part II</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/2013-04-18-ios-async-revisited/>iOS async revisited</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/2013-04-16-a-little-bit-of-ios-async/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

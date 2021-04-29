@@ -1,0 +1,68 @@
+<!doctype html><html><head><title>I saw my reflection and cried ... &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/2014-11-17-i-saw-my-reflection-and-cried-dot-dot-dot/>I saw my reflection and cried ...</a></h1><span class=post-date>Nov 16, 2014</span><div class=post-content><p>While I was visiting Boston earlier in the year I had the misfortune of kicking myself in the teeth with reflection. It&rsquo;s something all programmers inevitably go through with reflection API&rsquo;s as they are inherently untyped, a simple typo can leave you tearing out your hair or punching through your monitor! Yeah there&rsquo;s things the horizon that will help namely the <a href=http://msdn.microsoft.com/en-us/magazine/dn802602.aspx>nameof</a> expression in C#6 which should help in some areas, that&rsquo;s if your willing to pay the price of using C#, but I wont go into that here :-). In F# we can leverage Type Providers fairly easily to wrap API usages in cases that we are interested in, or even create a general usage with a little more effort.</p><h3 id=using-the-type-provider>Using the Type Provider</h3><p>In usage it will look like this vs the usual reflection API:</p><pre><code>
+//traditional reflection using untyped method
+let tt = typeof&lt;DateTime&gt;
+let meth = tt.GetMethod(&quot;Add&quot;)
+let result = meth.Invoke(DateTime.Now, [|TimeSpan.FromDays(1.)|])
+
+//using the type provider to provide a little safety net
+type rt = TypedReflection.Reflection&lt; &quot;System.DateTime&quot;, &quot;AddSeconds&quot;&gt;
+let result = rt.AddSeconds(DateTime.Now, 1.)
+</code></pre><p>If you make a mistake the compiler will tell you and you will be forces to fix the typo or add namespace prefixes etc. You also get intellisense.autocompletion on usage and you can give actual parameters rather than arrays of loose objects etc.</p><h3 id=code-dump>Code Dump</h3><p>First of all I&rsquo;m just going to leave the code here, and then talk through it below:</p><pre><code>[&lt;TypeProvider&gt;]
+type public ReflectionTypeProvider(config : TypeProviderConfig) as this = 
+    inherit TypeProviderForNamespaces()
+
+    let assembly = Assembly.GetExecutingAssembly()
+    let nameSpace = this.GetType().Namespace
+    let providerType =
+        ProvidedTypeDefinition(assembly, nameSpace, &quot;Reflection&quot;, Some typeof&lt;obj&gt;, 
+                               IsErased = true, HideObjectMethods = true)
+
+    let buildReflection typeName (parameters : obj[]) =  
+        let reflectionType = string parameters.[0]
+        let methodName = string parameters.[1]
+
+        let theType = Type.GetType(reflectionType, true)
+        let meth = theType.GetMethod(methodName)
+        if meth = null then failwith &quot;No such method!&quot;
+
+        let wrapper = ProvidedTypeDefinition(assembly, nameSpace, typeName, Some (typeof&lt;obj&gt;),
+                                             HideObjectMethods = true )
+
+        let parameterInfoToProvidedParameter (meth:MethodInfo) =
+            let pi = meth.GetParameters()
+
+            let instance = ProvidedParameter(&quot;instance&quot;, meth.ReflectedType)
+            let parameters =
+                pi
+                |&gt; Seq.map (fun p -&gt; ProvidedParameter(p.Name, p.ParameterType) )
+                |&gt; Seq.toList
+            instance :: parameters
+            
+        let reflectionWrapper =
+            ProvidedMethod (meth.Name, parameterInfoToProvidedParameter meth, meth.ReturnType,
+                            IsStaticMethod = true,
+                            InvokeCode = function
+                                         | instance :: parameters -&gt;
+                                             try Expr.Call (instance, meth, parameters)
+                                             with exn -&gt; failwith &quot;Error creating Invoke code.&quot;
+                                         | _ -&gt; failwith &quot;Error: unexpected number of parameters&quot; )
+        wrapper.AddMember reflectionWrapper
+        wrapper
+
+    do 
+        providerType.DefineStaticParameters
+            ([ ProvidedStaticParameter(&quot;Type&quot;, typeof&lt;string&gt;)
+               ProvidedStaticParameter(&quot;Method&quot;, typeof&lt;string&gt;) ], 
+             buildReflection)
+
+        this.AddNamespace (nameSpace, [ providerType ])
+
+[&lt;assembly:TypeProviderAssembly&gt;] 
+do()
+</code></pre><h3 id=skeleton-code>Skeleton code</h3><p>Reading from the bottom up you can see the parameters that our Type Provider accepts are <code>Type</code> and <code>Method</code>, those a pretty self explanatory. You should also notice other boiler plate Type Provider code if you read my last <a href=http://7sharpnine.com/posts/flux-compression-redux/>ZipProvider post</a>. The important part here is the <code>buildReflection</code> function.</p><h3 id=buildreflection>buildReflection</h3><p>First of all on lines <code>12/13</code> we scrape of the configuration parameters <code>theType</code> and <code>meth</code>, we then do a quick check to ensure the type and method actually exist, if they don&rsquo;t we raise an error on line <code>17</code> so the use can correct the code.</p><p>Next we create a variable named wrapper which <em>wraps</em> round the reflection API by creating a <code>ProvidedTypeDefinition</code> on line <code>19</code>. We now have two methods which we use to create our safe API, <code>parameterInfoToProvidedParameter</code> and <code>reflectionWrapper</code>.</p><h3 id=parameterinfotoprovidedparameter>parameterInfoToProvidedParameter</h3><p>The purpose of this is a mapping function from the reflection API&rsquo;s untyped abstract form to our typed form that we use in the construction of the Provided methods. Essentially this is pretty simple, we get the parameters for the <code>MethodInfo</code> which we are wrapping on line <code>23</code>. The first parameter will be the instance of the reflected method will be working on, and the rest of the parameters will be those of the reflected method. To add those we loop over the parameters from the <code>MethodInfo</code> and map then to <code>ProvidedProperties</code> by using the <code>Name</code> and <code>ParameterType</code> properties.</p><p><em>(Thinking about this we could do it slightly differently by adding a <code>ProvidedConstructor</code> which could take the initial instance, this could be added fairly easily if we really needed it. )</em></p><h3 id=reflectionwrapper>reflectionWrapper</h3><p>The reflectionWrapper is where the magic happens, we create a <code>ProvidedMethod</code> using the <code>MethodInfo</code>&rsquo;s name', we add the parameters by using the <code>parameterInfoToProvidedParameter</code> function, and we also add the return type by using the <code>MethodInfo</code>&rsquo;s <code>ReturnType</code> parameter'. We can also take advantage of <a href=http://msdn.microsoft.com/en-us/library/dd233192.aspx#sectionToggle4>object initializers</a> here to set <code>IsStaticMethod</code> to true, and to add in the invoke code.</p><p>The invoke code uses the <code>function</code> keyword which is really just a pattern match expression using only a single argument, here we use pattern matching on a list to extract the <code>head|tail</code> arguments. If you remember the <code>parameterInfoToProvidedParameter</code> function then you will know that it returns a list <code>instance :: parameters</code>. We can now use the <a href=http://msdn.microsoft.com/en-gb/library/ee370577.aspx>Quotations <code>Expr</code></a> type with the <a href=http://msdn.microsoft.com/en-us/library/ee370395.aspx><code>Call</code></a> function and pass in our instance and parameters in directly (instance is the reflected methods instance type, <code>meth</code> is the <code>MethodInfo</code> we will be calling, parameters are the parameters the <code>MethodInfo</code> requires.</p><h3 id=wrapping-up>Wrapping up</h3><p>Finally we just add the <code>ProvidedMethod</code> <em><code>reflectionWrapper</code></em> to the <code>ProvidedType</code> <em><code>wrapper</code></em></p><p>This is a fairly simple implementation but it could be <strong>beefed up</strong> quite easily into something a little more elaborate without too much trouble. If you use your imagination then there are numerous possibilities with Type Providers!</p><p>Reminds me of an old proverb:</p><pre><code>If you have a problem ...  
+if no one else can help ...  
+and if you cant find an existing one ...  
+maybe you can build ...  
+a Type Provider.
+</code></pre><p>:-)</p><p>Until next time!</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/2014-11-05-flux-compression-redux/>Flux Compression (redux)</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/2014-12-07-terror-from-the-deep/>Terror From The Deep</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/2014-11-17-i-saw-my-reflection-and-cried-dot-dot-dot/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

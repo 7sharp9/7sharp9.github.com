@@ -1,0 +1,159 @@
+<!doctype html><html><head><title>Pipeline processing 3 &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/pipeline-processing-3/>Pipeline processing 3</a></h1><span class=post-date>Apr 4, 2011</span><div class=post-content><p>Ok so I have been offline for a while now, what with starting a new financial contract in London and not having any broadband access for a while.  I have
+been working on something, honest!</p><p>Since the last post I have been reflecting on the pipeline design and it had a distinct object orientated feel to it that I wasnt happy with, so I have
+amended the structure of the code and come up with the following which simplifies in some areas and expands in others&mldr;</p><pre><code>module Pipeline
+  open System.Collections.Concurrent
+
+  [&lt;Interface&gt;]
+  type IPipelineInput&lt;'a&gt; =
+    abstract Insert: 'a -&gt; unit
+ 
+  [&lt;Interface&gt;]
+  type IPipelineConnection&lt;'a&gt; =
+    abstract Attach: IPipelineInput&lt;'a&gt; -&gt; unit
+    abstract Detach: IPipelineInput&lt;'a&gt; -&gt; unit
+ 
+  [&lt;Interface&gt;]
+  type IPipeline&lt;'a,'b&gt; =
+    inherit IPipelineConnection&lt;'b&gt;
+    inherit IPipelineInput&lt;'a&gt;
+
+  type PipelineStage&lt;'a,'b&gt;(processor, router: seq&lt;IPipelineInput&lt;'b&gt;&gt; * 'b -&gt; seq&lt;IPipelineInput&lt;'b&gt;&gt;, ?overflow, ?capacity, ?blockingTime) =
+    let processor = processor
+    let router = router  
+    let createBlockingCollection x =
+        match x with
+        | Some c -&gt; new BlockingCollection&lt;'a&gt;(c:int)
+        | None -&gt; new BlockingCollection&lt;'a&gt;()  
+    let buffer = createBlockingCollection capacity
+    let routes = ref List.empty&lt;IPipelineInput&lt;'b&gt;&gt;
+    let queuedOrRunning = ref false  
+    let blocktime =
+      match blockingTime with
+      | Some b -&gt; b
+      | None -&gt; 250  
+    let consumerLoop = async {
+      try
+        let rec loop()=
+          let item = ref Unchecked.defaultof&lt;_&gt;
+          let taken = buffer.TryTake(item, blocktime)
+          if taken then
+              do !item
+              |&gt; processor
+              |&gt; Seq.iter (fun z -&gt;
+              (match !routes with
+               | [] -&gt; ()(*we cant route with no routes*)
+               | _ -&gt; do router (!routes, z) |&gt; Seq.iter (fun r -&gt; (r.Insert z ))) )
+              loop()
+          else ()(*exit nothing to consume in time limit*)
+        loop()
+      with e -&gt; raise e
+      }  
+    member this.ClearRoutes = routes := []  
+    interface IPipelineInput&lt;'a&gt; with
+      member this.Insert payload =
+        let added = buffer.TryAdd(payload, blocktime)
+        if added then
+          //begin consumer loop
+          if not !queuedOrRunning then
+            lock consumerLoop (fun() -&gt;
+            Async.Start(async {do! consumerLoop })
+            queuedOrRunning := true)
+          else()
+        else
+          //overflow here if function passed
+          match overflow with
+          | Some t -&gt;  payload |&gt; overflow.Value
+          | None -&gt; ()  
+    interface IPipelineConnection&lt;'b&gt; with
+      member this.Attach (stage) =
+        let current = !routes
+        routes := stage :: current  
+      member this.Detach (stage) =
+        let current = !routes
+        routes := List.filter (fun el -&gt; el &lt;&gt; stage) current  
+    static member Attach (a:IPipelineConnection&lt;_&gt;) (b) =
+      a.Attach b ;b  
+    static member Detach (a: IPipelineConnection&lt;_&gt;) (b) =
+      a.Detach b ;a  
+    static member (++&gt;) (a:IPipelineConnection&lt;_&gt;, b) =
+      a.Attach (b) ;b  
+    static member (--&gt;) (a:IPipelineConnection&lt;_&gt;, b) =
+      a.Detach b ;a  
+    static member (&lt;&lt;--) (a:IPipelineInput&lt;_&gt;, b:'b) =
+      a.Insert b  
+    static member (--&gt;&gt;) (b,a:IPipelineInput&lt;_&gt;) =
+      a.Insert b
+</code></pre><h3 id=summary>Summary.</h3><p>I only want to summarise the code as I think its fairly straight forward to
+see whats going on.</p><h3 id=interfaces>Interfaces</h3><p>We have two main interfaces defined <strong>IPipelineInput&lt;&lsquo;a></strong> and
+**IPipelineConnection&lt;&lsquo;a>, **as you can tell by the names they are involved
+with connecting the pipeline together and getting information into the
+pipeline.  Those two interfaces are merged together in the IPipeline&lt;&lsquo;a, &lsquo;b>
+interface, this keeps a nice separation between connecting and inserting into
+the pipeline, it also makes implementation easier and allows the interfaces to
+be implemented in other areas of code that need to talk to or connect to a
+pipeline.</p><h3 id=internals>Internals</h3><p>Inside the pipeline we have the bounded blocking queue which is implemented by
+the BlockingCollection from TPL. This is used to store the pipeline payloads
+that are waiting to be processed.</p><p>The consumerLoop function is recursive and continually tries to take items
+from the blocking collection processing and routing each one to the next
+pipeline stage.</p><p>The processor is a function that transforms from type &lsquo;a to type &lsquo;b.</p><p>The router is a function that takes a sequence of IPipelineInput&lt;&lsquo;b> and also
+the payload &lsquo;b it returns a sequence of IPipelineInput&lt;&lsquo;b>.  What this
+effectively means is that we can route by the connected stages (i.e. round
+robin routing, multi-cast routing.)   Or we could route by payload contents
+(i.e. if the payload contains a certain bytes sequence we could choose a
+certain IPipelineInput&lt;&lsquo;b>.)</p><p>Each item taken is passed to the processor and router via pipeline (<strong>|></strong>) and
+Seq operations, recursively calling itself until an item can no longer be
+retrieved from the buffer.</p><p>The implementation of IPipelineInput&lt;&lsquo;a>.Insert is the counterpart to the
+previous function. It first tries to inset the item into the bounded blocking
+queue, if this cannot be done then the overflow function is called if one is
+present. Next the async consumer loop is started if it is not already running.
+The idea behind this is that by keeping the payload processing running on the
+thread pool while there is work to do it will cut down on the number of
+context switches between threads.  Once an item cannot be taken from the
+bounding blocking queue the loop will exit.</p><p>The rest of the code is pretty standard stuff and should be pretty easy to
+follow.</p><p>I also define some symbolic operations to simply constructing and using the
+pipeline:</p><p><strong>++></strong> Attaches the pipeline stage on the right hand side to the one on the left. <strong>&ndash;></strong> Detaches the pipelinestage on the right from the one on the left. <strong>&#171;&ndash;</strong> Inserts a payload on the right into the pipeline stage on the left. <strong>&ndash;&#187;</strong> Inserts a payload on the left hand side into the pipeline stage on the right.<br>These help to keep a nice terse description of the pipeline, once things get a little more complex other operators may be required, the now discontinued
+<a href=http://msdn.microsoft.com/en-us/devlabs/dd795202.aspx>Axiom</a> had a whole host of these, its a pity Microsoft dropped the language.</p><h3 id=example>Example</h3><p>Heres a quick sample pipeline showing the pipeline in use:</p><ul><li>Stage 1 takes a string and splits it based on the &lsquo;,&rsquo;.</li><li>Stage 2 reverses each string.</li><li>Stage 3 reverses the string back to the original.</li></ul><pre><code>module program
+  open System
+  open Pipeline  
+  let consoleLock = new obj()  
+  let split del n (s:string) =
+    lock consoleLock (fun() -&gt;
+    do printfn &quot;%A:before split %A&quot; n s
+    let split = s.Split([|del|])
+    do printfn &quot;%A:after: split into: %A&quot; n split
+    split |&gt; Array.toSeq)  
+  let reverse (s:string) =
+    new string(s |&gt; Seq.toArray |&gt; Array.rev)  
+  let oneToSingleton a b f=
+    lock consoleLock (fun() -&gt;
+      printfn &quot;%A:before reverse %A&quot; a b
+      let result = b |&gt; f
+      printfn &quot;%A:after reverse %A&quot; a result
+      result|&gt; Seq.singleton)  
+  let OneToSeqRev a b = oneToSingleton a b reverse   
+  ///Simply picks the first route
+  let basicRouter( r, i) =
+    let head = Seq.head r
+    Seq.singleton head  
+  let p1 = PipelineStage( split ',' &quot;1&quot;, basicRouter)
+  let p2 = PipelineStage( OneToSeqRev &quot;2&quot;, basicRouter)
+  let p3 = PipelineStage( OneToSeqRev &quot;3&quot;, basicRouter)  
+  p1 ++&gt; p2 ++&gt; p3 |&gt; ignore  
+  let generateCircularSeq (lst:'a list) =
+    let rec next () =
+      seq {
+        for element in lst do
+          yield element
+        yield! next()
+      }
+    next()  
+  for str in [&quot;John,Paul,George,Ringo&quot;]
+  |&gt; generateCircularSeq
+  |&gt; Seq.take 10
+    do  str --&gt;&gt; p1  
+  let x = Console.ReadKey()
+</code></pre><p>As you can see the assignment of the pipeline stages is pretty simple as is the composition of multiple stages.  This was often one of the most difficult
+areas while developing a similar pipelines in C# you could often find yourself with a few hundred lines of setup code which was a often a nightmare to debug
+a few weeks later.</p><p>Hopefully I have whet your appetite with pipelines, in a future article I will be combining socket operations with pipeline stages to produce a flexible
+framework to deal with high throughput network applications.</p><p>As always I appreciate any comments, until next time&mldr;</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/pipeline-processing-2/>Pipeline processing 2</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/agents-and-objectpools/>Agents and ObjectPools</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/pipeline-processing-3/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

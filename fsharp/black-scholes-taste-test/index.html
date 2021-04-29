@@ -1,0 +1,173 @@
+<!doctype html><html><head><title>Black-Scholes Taste Test &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/black-scholes-taste-test/>Black-Scholes Taste Test</a></h1><span class=post-date>Mar 11, 2012</span><div class=post-content><p>In this edition we are going to be doing a taste test, C# vs F#. Oh yeah, if you quickly glanced at the title you may
+have thought this was a recipe for black scones, as interesting and tasty as that may be, unfortunately its going
+to be finance related.</p><p>I recently presented a paper on the benefits of F#, part of this was a comparison of the famous
+<a href=http://en.wikipedia.org/wiki/Black-Scholes>Black-Scholes</a> equation in both C# and F#. I was mainly going to be
+looking at code succinctness and the inherent suitability of the language for calculation based work, but there ended
+up being more to it than that.</p><p>First of all I quickly set up a test rig to run 50 million iterations of the algorithm to see if there were any difference
+in the processing speed. I want expecting any major differences at this point but here&rsquo;s what I got:</p><p>C# results for 50 million iterations<figure><img src=https://lh6.googleusercontent.com/-cEzGoE_P2cE/T1vf_SxtGfI/AAAAAAAABRE/RE4ReRLAhu8/s531/csbs.png></figure></p><p>F# results for 50 million iterations<figure><img src=https://lh3.googleusercontent.com/-PLdltL0YiIs/T1vf_Wo2ZrI/AAAAAAAABRI/WijGdNaOnK4/s531/fsbs.png></figure></p><p>I think you will agree that&rsquo;s quite a difference, lets have a look at the code to see what&rsquo;s going on.</p><h2 id=c-implementation>C# Implementation</h2><pre><code>public class Options
+{
+    public enum Style
+    {
+        Call,
+        Put
+    }
+
+    public static double BlackScholes(Style callPut, double s, double x, double t, double r, double v)
+    {
+        double result = 0.0;
+        var d1 = (Math.Log(s / x) + (r + v * v / 2.0) * t) / (v * Math.Sqrt(t));
+        var d2 = d1 - v * Math.Sqrt(t);
+        switch (callPut)
+        {
+            case Style.Call:
+                result = s * Cnd(d1) -x * Math.Exp(-r * t) * Cnd(d2);
+                break;
+            case Style.Put:
+                result = x * Math.Exp(-r * t) * Cnd(-d2) -s * Cnd(-d1);
+                break;
+        }
+        return result;
+    }
+
+    private static double Cnd(double x)
+    {
+        const double a1 = 0.31938153;
+        const double a2 = -0.356563782;
+        const double a3 = 1.781477937;
+        const double a4 = -1.821255978;
+        const double a5 = 1.330274429;
+        var l = Math.Abs(x);
+        var k = 1.0 / (1.0 + 0.2316419 * l);
+        var w = 1.0 - 1.0 / Math.Sqrt(2 * Math.PI) * 
+            Math.Exp(-l * l / 2.0) * (a1 * k + a2 * k * k + a3 * 
+                Math.Pow(k, 3) + a4 * Math.Pow(k, 4) + a5 * Math.Pow(k, 5));
+        if (x &lt; 0)
+        {
+            return 1.0 - w;
+        }
+        return w;
+    }
+}
+</code></pre><h2 id=f-implementation>F# Implementation</h2><pre><code>module options
+open System
+
+type Style = Call | Put
+  
+let cnd x =
+   let a1 = 0.31938153
+   let a2 = -0.356563782
+   let a3 = 1.781477937
+   let a4 = -1.821255978
+   let a5 = 1.330274429
+   let l  = abs x
+   let k  = 1.0 / (1.0 + 0.2316419 * l)
+   let w  = (1.0 - 1.0 / sqrt(2.0 * Math.PI) * 
+                exp(-l * l / 2.0) * (a1 * k + a2 * k * k + a3 * 
+                    (pown k 3) + a4 * (pown k 4) + a5 * (pown k 5)))
+   if x &lt; 0.0 then 1.0 - w
+   else w
+
+let blackscholes style s x t r v =
+    let d1 = (log(s / x) + (r + v * v / 2.0) * t) / (v * sqrt(t))
+    let d2 = d1 - v * sqrt(t)
+    match style with
+    | Call -&gt; s * cnd(d1) -x * exp(-r * t) * cnd(d2)
+    | Put -&gt; x * exp(-r * t) * cnd(-d2) -s * cnd(-d1)
+</code></pre><h2 id=differences>Differences</h2><p>The most significant differences when the code is compiled comes down to a few areas.</p><h3 id=the-blackscholes-function>The BlackScholes function</h3><p>The first thing to note is the code size and number of local variables:</p><pre><code>// Code size       122 (0x7a)
+.maxstack  6
+.locals init ([0] float64 d1,
+         [1] float64 d2)
+</code></pre><pre><code>// Code size       164 (0xa4)
+.maxstack  4
+.locals init ([0] float64 d1,
+         [1] float64 d2,
+         [2] float64 result,
+         [3] valuetype CsBs.Options/Style CS$0$0000)
+</code></pre><p>The initial arguments that are loaded in the F# implementation is done in fewer IL op codes then C#.</p><pre><code>IL_0001:  ldarg.1
+IL_0002:  ldarg.2
+IL_0003:  div
+IL_0004:  call       float64 [mscorlib]System.Math::Log(float64)
+</code></pre><pre><code>IL_0000:  ldc.r8     0.0
+IL_0009:  stloc.0
+IL_000a:  ldc.r8     0.0
+IL_0013:  stloc.1
+IL_0014:  ldc.r8     0.0
+IL_001d:  stloc.2
+IL_001e:  ldarg.1
+IL_001f:  ldarg.2
+IL_0020:  div
+IL_0021:  call       float64 [mscorlib]System.Math::Log(float64)
+</code></pre><p>You can see in the C# code is intialising the local variable to 0.0 by pushing them to the stack
+<code>ldc.r8</code> then storing them <code>stloc.0</code>.</p><p>The pattern matching in the F# code results in a call to get the style <code>options/Style::get_Tag()</code>
+and then a branch if not equal opcode <code>bne.un.s</code> which causes a jump to <code>IL_005d</code></p><pre><code>IL_0036:  call       instance int32 options/Style::get_Tag()```
+IL_003b:  ldc.i4.1
+IL_003c:  bne.un.s   IL_005d
+</code></pre><p>The C# version loads the local variable for the <code>Style</code> <code>IL_0053: stloc.3</code> and then uses the switch
+opcode to jump table to jump to either position <code>IL_0064</code> or <code>IL_0083</code>.</p><pre><code>IL_0053:  stloc.3
+IL_0054:  ldloc.3
+IL_0055:  switch     ( 
+                      IL_0064,
+                      IL_0083)
+IL_0062:  br.s       IL_00a2
+</code></pre><p>These are negligible, I&rsquo;m mealy pointing out the differences in compilation between the two languages.<br>The F# compiler is more stringent when compiling the code.</p><h3 id=the-cnd-function>The Cnd function</h3><p>The Cnd function or <a href=http://en.wikipedia.org/wiki/Normal_distribution>cumulative normal distribution</a>
+is where the performance differences occur.</p><p>Again at initialization you can see the C# version is larger by 41.</p><pre><code>// Code size       213 (0xd5)
+.maxstack  8
+.locals init ([0] float64 l,
+         [1] float64 k,
+         [2] float64 w)
+</code></pre><pre><code>// Code size       254 (0xfe)
+.maxstack  6
+.locals init ([0] float64 l,
+         [1] float64 k,
+         [2] float64 w)
+</code></pre><p>The C# version initialises all the local variables to 0.0.</p><pre><code>IL_0000:  ldc.r8     0.0
+IL_0009:  stloc.0
+IL_000a:  ldc.r8     0.0
+IL_0013:  stloc.1
+IL_0014:  ldc.r8     0.0
+IL_001d:  stloc.2
+</code></pre><p>Interestingly the C# compiler optimises out the call to <code>Math.PI * 2</code> but the F# compiler doesn&rsquo;t.</p><pre><code>IL_003a:  ldc.r8     2.
+IL_0043:  ldc.r8     3.1415926535897931
+IL_004c:  mul
+</code></pre><pre><code>IL_0057:  ldc.r8     6.2831853071795862
+</code></pre><p>From here everything is identical until we get to the power operator section (<code>Math.Pow</code> in the C# version and <code>pown</code> in F#).</p><pre><code>IL_0089:  ldloc.1
+IL_008a:  ldc.i4.3
+IL_008b:  call       float64 [FSharp.Core]Microsoft.FSharp.Core.Operators/OperatorIntrinsics::PowDouble(float64, 
+                                                                                                        int32)
+</code></pre><p>In the F# code we are using the <code>pown</code> function which calculates the power to an integer. This is shown in the
+call to <code>OperatorIntrinsics::PowDouble</code> which uses the value in <code>IL_0089: ldloc.1</code> and also loads the
+integer 3 with <code>IL_008a: ldc.i4.3</code>.</p><pre><code>IL_009c:  ldloc.1
+IL_009d:  ldc.r8     3.
+IL_00a6:  call       float64 [mscorlib]System.Math::Pow(float64,
+                                                        float64)
+</code></pre><p>The C# code is using the standard Math.Pow operator which operates on two float64 numbers. The value of 3 is
+implicitly converted into a <code>float64</code> during compilation <code>IL_009d: ldc.r8 3.</code>.</p><p>The final difference is at the end of the function.</p><pre><code>IL_00b8:  stloc.2
+IL_00b9:  ldarg.0
+IL_00ba:  ldc.r8     0.0
+IL_00c3:  clt
+IL_00c5:  brfalse.s  IL_00d3
+IL_00c7:  ldc.r8     1.
+IL_00d0:  ldloc.2
+IL_00d1:  sub
+IL_00d2:  ret
+IL_00d3:  ldloc.2
+IL_00d4:  ret
+</code></pre><p>The F# version uses the <code>clt</code> opcode. This pushes 1 if value one on the stack is less than value two otherwise
+it pushes 0. There is then a <code>brfalse.s</code> which jumps to location <code>IL_00d3</code> if the first value on the stack is
+less than or equal to the second value.</p><pre><code>IL_00b8:  stloc.2
+IL_00b9:  ldarg.0
+IL_00e5:  ldc.r8     0.0
+IL_00ee:  bge.un.s   IL_00fc
+IL_00f0:  ldc.r8     1.
+IL_00f9:  ldloc.2
+IL_00fa:  sub
+IL_00fb:  ret
+IL_00fc:  ldloc.2
+IL_00fd:  ret
+</code></pre><p>The C# version uses the <code>bge.un.s</code> to jump to location <code>IL_00fc</code> if the first value on the stack is greater than
+the second. This is negligible in normal runtime but it is interesting to note the difference between the two.</p><h2 id=conclusion>Conclusion</h2><p>Wow, there was a lot of IL to get through, I hope you stayed with me!</p><p>Although the difference in some areas are negligible, every little counts. The implicit conversion of an integer
+field to a <code>float64</code> hides the fact that we were using an optimized integer power function in F#, that&rsquo;s performance
+increase of 168%! Some other side effects of implicit conversion can also lead to subtle bugs due to truncation
+and overflow. The other benefits are the compiled code uses less instructions and the source code only uses 25
+lines compared to 44 in C#.</p><p>Until next time!</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/fsharp-dataflow-agents-iii/>FSharp Dataflow agents III</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/back-to-the-primitive/>Back to the Primitive</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/black-scholes-taste-test/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

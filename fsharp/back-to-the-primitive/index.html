@@ -1,0 +1,66 @@
+<!doctype html><html><head><title>Back to the Primitive &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/back-to-the-primitive/>Back to the Primitive</a></h1><span class=post-date>Apr 12, 2012</span><div class=post-content><p>In this post we are going <strong>back to the primitive</strong>. No it&rsquo;s not about the same named song by Soulfly, <em>(which incidentally does contains F# notes)</em> but a return to thread synchronisation primitives and their asynchronous counterparts.</p><p>We are going to be looking at an asynchronous version of the <a href=http://msdn.microsoft.com/en-us/library/system.threading.manualresetevent.aspx>ManualResetEvent</a>. This was
+recently covered by Stephen Toub on the <a href=http://blogs.msdn.com/b/pfxteam/archive/2012/02/11/10266920.aspx>pfx team blog</a>. We will be taking a slightly different view on
+this as we will be using asynchronous workflows which will give us nice idiomatic usage within F#.</p><p>First lets look of the shape of the type that Stephen defined:</p><pre><code>public class AsyncManualResetEvent 
+{ 
+    public Task WaitAsync(); 
+    public void Set(); 
+    public void Reset(); 
+}
+</code></pre><p>Now this can be used from within F# by using the <code>Async.AwaitTask</code> function from the Async module but this is like wrapping one asynchronous paradigm with another, and
+although this does work, what if you want to avoid the overhead of wrappers and stay strictly within async workflows.</p><pre><code>type asyncManualResetEvent() =
+    member x.WaitAsync() : unit -&gt; Async&lt;bool&gt;
+    member x.Set() : unit -&gt; unit
+    member x.Reset() : unit -&gt; unit
+</code></pre><p>That&rsquo;s what we want to see! I don&rsquo;t want to get into the details of the description of how the C# version works as Stephen does a very good job of that already. What I will explain though is how we essentially do the same thing while staying with the realm of functional programming. As we are getting into the lower lever details no doubt we will have to start relying on some low level locking primitives like Monitors, Semaphores, and Interlocked operations, even the F# core libraries have a
+cornucopia of those.</p><p>Lets look at the first member <code>WaitAsync()</code>. The first step is to create a something to store the result of the operation, all we will just be storing and returning
+asynchronously is a boolean to indicate that the wait handle has been set. To do this we use one of the types from the
+<a href=http://fsharppowerpack.codeplex.com/>F# power pack</a> <code>AsyncResultCell&lt;'T></code>. I think that such a type should of been exposed from the F# core libraries but it was
+omitted for some reason. There is a type called <code>ResultCell&lt;'T></code> with much the same functionality in the FSharp.Core.Control namespace but it is marked internal so
+it&rsquo;s not available for our use.</p><p>We declare a <a href=http://msdn.microsoft.com/en-us/library/dd233186.aspx>reference cell</a> of type <code>AsyncResultCell&lt;'T></code> and then create the <code>WaitAsync()</code> member, all we have
+to do is dereference the value of the reference cell with <code>!</code> and call its <code>AsyncResult</code> member, this gives us an <code>Async&lt;bool></code> which we can easily use in an asynchronous workflow.</p><pre><code>type asyncManualResetEvent() =
+    let aResCell = ref &lt;| AsyncResultCell&lt;_&gt;()
+
+    member x.WaitAsync() = (!aResCell).AsyncResult
+</code></pre><p>The next bit is fairly simple too. All we need to do is dereference the value of the reference cell, and invoke the <code>RegisterResult</code> member by passing in a value of
+<code>AsyncOk(true)</code>. The boolean value of true will be used by the type inference system to constrain the value of the <code>Async&lt;_></code> returned from <code>WaitAsync</code>.</p><pre><code>    member x.Set() = (!aResCell).RegisterResult(AsyncOk(true))
+</code></pre><p>The last part is the most complex <em>(as usual)</em>. Here we create a recursive function called <code>swap</code> that will try to exchange the <code>AsyncResultCell&lt;'T></code> for a new
+one. We dereference the reference cell to <code>currentValue</code>, then we use a CAS (Compare And Swap) operation to compare the <code>aResCell</code> with <code>currentValue</code> and if they
+are equal <code>newVal</code> will replace <code>aResCell</code>. On the next line if the result of the CAS operation means that <code>result</code> and <code>currentValue</code> are equal then we are finished,
+otherwise we spin the current thread for 20 cycles using <code>Thread.SpinWait 20</code> before retrying the operation via recursion <code>swap newVal</code>. This will be a lot less
+expensive than switching to user or kernel mode locking, and the period of contention between threads should be very small. Finally the swap operation is started
+by passing in a new <code>AsyncResultCell&lt;'T></code>.</p><p>There are various other methods we could of used, for instance we could of wrapped a <code>ManualResetEvent</code> with a call to <code>Async.AwaitWaitHandle</code>, although this
+would of meant using the kernel mode locking of the <code>ManualResetEvent</code> which is a bit more expensive.</p><p>In Stephen Toub&rsquo;s post he mentions Task&rsquo;s being orphaned due to the <code>Reset()</code> method being called before the <code>Task&lt;'T></code> has been completed, that shouldn&rsquo;t happen in our
+implementation due the the closures being stored internally for completion by the async infrastructure. Heres a quick test harness to make sure everything works as expected anyway.</p><pre><code>    member x.Reset() =
+        let rec swap newVal = 
+            let currentValue = !aResCell
+            let result = Interlocked.CompareExchange&lt;_&gt;(aResCell, newVal, currentValue)
+            if obj.ReferenceEquals(result, currentValue) then ()
+            else Thread.SpinWait 20
+                 swap newVal
+        swap &lt;| AsyncResultCell&lt;_&gt;()
+</code></pre><pre><code>let amre = asyncManualResetEvent()
+let x = async{let! x = amre.WaitAsync()
+              Console.WriteLine(&quot;First signalled&quot;)}
+
+let y = async{let! x = amre.WaitAsync()
+             Console.WriteLine(&quot;Second signalled&quot;)}
+
+let z = async{let! x = amre.WaitAsync()
+              Console.WriteLine(&quot;Third signalled&quot;)}
+//start async workflows x and y
+Async.Start x
+Async.Start y
+
+//reset the asyncManualResetEvent, this will test whether the async workflows x and y 
+// are orphaned due to the AsyncResultCell being recycled.
+amre.Reset()
+
+//now start the async z
+Async.Start z
+
+//we set a single time, this should result in the three async workflows completing
+amre.Set()
+
+Console.ReadLine() |&gt; ignore
+</code></pre><p>Here we can see everything works out as we expected:</p><figure><img src=https://lh6.googleusercontent.com/-NYIKC5Gaahs/T4YAQGtP9RI/AAAAAAAABR8/_cTOriC1_Fw/amre.png></figure><p>Thats all there is too it, next time I will be exploring an asyncAutoResetEvent in much the same vein.</p><p>Until next time&mldr;</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/black-scholes-taste-test/>Black-Scholes Taste Test</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/back-to-the-primitive-ii/>Back to the Primitive II</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/back-to-the-primitive/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

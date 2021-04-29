@@ -1,0 +1,51 @@
+<!doctype html><html><head><title>Anything you can do ... &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/2014-06-01-anything-you-can-do/>Anything you can do ...</a></h1><span class=post-date>Jun 1, 2014</span><div class=post-content><p>For any of you that are aware of the newly updated Xamarin Web site, you may have seen the <a href=https://xamarin.com/platform>following</a>:</p><blockquote><p>Objective-C was ahead of its time 30 years ago.
+C# is ahead of its time today.
+Anything you can do in Objective-C or Java, you can do in C# with Xamarin—usually more succinctly and with fewer bugs.</p></blockquote><p>What is also true is that F# is way ahead of its time, and you can produce even more succinct code with even fewer bugs than C#!</p><p>Take the code snippets from that page.</p><p>First up the Objective C version:</p><pre><code>@interface Person : NSObject
+@property (strong, nonatomic) NSString *name;
+@end
+
+@implementation Person
+- (id)initWithName:(NSString *)name {
+    self = [super init];
+    if (self) {
+        self.name = name;
+    }
+    return self;
+}
+
++ (NSArray *)getNames
+{
+    NSArray *people = @[
+      [[Person alloc] initWithName:@&quot;David&quot;],
+      [[Person alloc] initWithName:@&quot;Vinicius&quot;],
+      [[Person alloc] initWithName:@&quot;Serena&quot;],
+    ];
+    NSMutableArray *names = [NSMutableArray array];
+    for (Person *person in people) {
+        [names addObject:person.name];
+    }
+    return names;
+}
+@end
+</code></pre><p>Heres the C# version:</p><pre><code>class Person : NSObject {
+  public string Name { get; set; }
+  
+  public static string[] GetNames() {
+    var people = new[] {
+        new Person { Name=&quot;David&quot; },
+        new Person { Name=&quot;Vinicius&quot; },
+        new Person { Name=&quot;Serena&quot; },
+    };
+    return people.Select(person =&gt; person.Name).ToArray();
+  }
+}
+</code></pre><p>And finally the F# version:</p><pre><code>type Person() =
+   inherit NSObject()
+   member val Name = &quot;&quot; with get, set
+   static member GetNames() =
+      [| new Person(Name=&quot;David&quot;)
+         new Person(Name=&quot;Vinicius&quot;)
+         new Person(Name=&quot;Serena&quot;) |]
+      |&gt; Array.map(fun person -&gt; person.Name)
+</code></pre><p>You can see the F# version is doing exactly the same, although we are using the <code>map</code> function from the <a href=http://msdn.microsoft.com/en-us/library/ee370273.aspx><code>Array</code> module</a> rather than the <a href=http://msdn.microsoft.com/en-us/library/bb397926.aspx>Linq</a> <code>Select</code> extension method.</p><p>Its not all about the lines of code though, using F# gives you all many advantages:</p><ul><li>Using the type system to make sure the code is behaving how you expect before you even compile.</li><li><a href=http://msdn.microsoft.com/en-gb/library/dd547125.aspx>Pattern matching</a> in F# is amazing! It can vastly simplify complex control logic, add Active patterns to that and you are ready to take on the world!</li><li>Problems are approached from a functional perspective which often leads to succinct functions that are easy to reason about, test, and compose.</li><li>F# emphasizes immutability and functional composition rather than inheritance, again this boils down to simplicity.</li><li>Features like <a href=http://msdn.microsoft.com/en-gb/library/hh156509.aspx>Type providers</a> can vastly simplify how you deal with data within your application, making access to data really easy and intuitive.</li></ul><p>Theres are many areas that F# can really help productivity during development. I hope to write a few more short posts to really bring attention to these. I use F# all the time and often forget how awesome it is until I go back to another language thats missing those features.</p><p>Until next time!</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/2014-05-28-xamarin-3-fsharp-awsomeness/>Xamarin 3 F# Awesomeness</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/2014-11-05-flux-compression-redux/>Flux Compression (redux)</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/2014-06-01-anything-you-can-do/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

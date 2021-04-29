@@ -1,0 +1,249 @@
+<!doctype html><html><head><title>Sockets and Bockets 2 &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/sockets-and-bockets-part-2/>Sockets and Bockets 2</a></h1><span class=post-date>Jan 14, 2011</span><div class=post-content><h3 id=welcome-to-part-two>Welcome to part two</h3><p>Lets jump in at the deep end and take a look at some code&mldr;</p><p>When you look at the method syntax for the xxxAsync methods you will notice
+they return a boolean value that indicates if the method completed
+synchronously, this means that you have to check the return value every time
+you use one of the methods and invoke the callback yourself if it completes
+synchronously.  In practice this hardly ever happens, and normally only on a
+send operation.  But as it is a possibility we will add module with a some
+extension methods in to help us out, this will make the code more readable and
+avoid unnecessary duplication.</p><h3 id=socketextensions>SocketExtensions</h3><pre><code>module SocketExtensions
+  open System
+  open System.Net
+  open System.Net.Sockets  
+  type Socket with
+    /// extension method to make async based call easier, this ensures the callback always gets
+    /// called even if there is an error or the async method completed syncronously
+    member s.InvokeAsyncMethod( asyncmethod, callback, args:SocketAsyncEventArgs) =
+      let result = asyncmethod args
+      if result &lt;&gt; true then callback args
+    member s.AcceptAsyncSafe(callback, args) = s.InvokeAsyncMethod(s.AcceptAsync, callback, args)
+    member s.ReceiveAsyncSafe(callback, args) = s.InvokeAsyncMethod(s.ReceiveAsync, callback, args)
+    member s.SendAsyncSafe(callback, args) = s.InvokeAsyncMethod(s.SendAsync, callback, args)
+    member s.DisconnectAsyncSafe(callback, args) = s.InvokeAsyncMethod(s.DisconnectAsync, callback, args)
+</code></pre><p>Now lets get down to business, the next few types have a fair bit of code in
+them so I will briefly explain each type in turn:</p><h3 id=bocketpool>BocketPool</h3><p>A BocketPool is a combination of a
+[SocketAsyncEventArgs](<a href=http://msdn.microsoft.com/en->http://msdn.microsoft.com/en-</a>
+us/library/system.net.sockets.socketasynceventargs.aspx) object and a chunk of
+memory allocated in an array.  The array is sliced up into sections and
+allocated for each send or receive operation by setting a start and end index
+using <a href=http://msdn.microsoft.com/en-us/library/bb549836.aspx>SetBuffer()</a>.
+If you remember last time I mentioned that a lot of memory fragmentation can
+occur during sending and receiving due to continuously allocating memory
+buffers on the Socket object, this is primarily done through the BeginSend and
+BeginReceive methods passing in a byte array.  Using the BocketPool it a great
+way of reducing the amount of garbage collection during heavy traffic.</p><p>The other major difference with SocketAsyncEventArgs is the way in which you
+make the send and receive calls, heres the general flow that occurs:</p><ul><li>Create a SocketAsyncEventArgs object or get one from a pool.</li><li>Allocate an array to the buffer.</li><li>Allocate an offset and length to the buffer.</li><li>Allocate a callback method.</li><li>Call Socket.xxxAsync passing in the SocketAsyncEventArgs, the operation will complete and invoke the callback.</li></ul><p>What we are going to do is wrap the whole creation, array allocation, and
+offsetting to the BocketPool:</p><pre><code>namespace Fes
+  open System
+  open System.Net.Sockets
+  open System.Collections.Concurrent  
+  type BocketPool( number, size, callback) as this =
+    let number = number
+    let size = size
+    let totalsize = (number * size)
+    let buffer = Array.create totalsize 0uy
+    let pool = new BlockingCollection&lt;SocketAsyncEventArgs&gt;(number:int)
+    let mutable disposed = false
+    let cleanUp() =
+      if not disposed then
+        disposed &lt;- true
+        pool.CompleteAdding()
+        while pool.Count &gt; 1 do
+          (pool.Take() :&gt; IDisposable).Dispose()
+        pool.Dispose()
+    do
+      let rec loop n =
+        match n with
+        | x when x &lt; totalsize -&gt;
+          let saea = new SocketAsyncEventArgs()
+          saea.Completed |&gt; Observable.add( fun saea -&gt; (callback saea))
+          saea.SetBuffer(buffer, n, size)
+          this.CheckIn(saea)
+          loop (n + size)
+        | _ -&gt; ()
+      loop 0
+    member this.CheckOut()=
+      pool.Take()
+    member this.CheckIn(saea)=
+      pool.Add(saea)
+    member this.Count =
+      pool.Count
+    interface IDisposable with
+      member this.Dispose() = cleanUp()
+</code></pre><p>Next up we have to look at the Connection and the Tcplistener types as two
+interconnected entities:</p><ul><li>The TcpListener listens for a connection on a socket and port number.</li><li>The client connects to the server.</li><li>An accept socket is allocated to the client, at this point we have one socket for the server and once for each client.</li><li>We also need to allocate a BocketPool for send and receive operation for each client
+To simplify things we are going to encapsulate the accept socket management
+into a type, it will also need a corresponding BocketPool to service any send
+and receive operations to and from the client</li></ul><h3 id=connection>Connection</h3><pre><code>namespace Fes
+  open System
+  open System.Net
+  open System.Net.Sockets
+  open System.Collections.Generic
+  open System.Collections.Concurrent
+  open System.Threading
+  open SocketExtensions  
+  type Connection(maxreceives, maxsends, size, socket:Socket) as this =
+    let socket = socket
+    let maxreceives = maxreceives
+    let maxsends = maxsends
+    let sendPool = new BocketPool(maxsends, size, this.sendCompleted )
+    let receivePool = new BocketPool(maxreceives, size, this.receiveCompleted)
+    let mutable disposed = false
+    let mutable anyErrors = false  
+    let cleanUp() =
+      if not disposed then
+        disposed &lt;- true
+        socket.Shutdown(SocketShutdown.Both)
+        socket.Disconnect(false)
+        socket.Close()
+        (sendPool :&gt; IDisposable).Dispose()
+        (receivePool :&gt; IDisposable).Dispose()  
+    member this.Start() =
+      socket.ReceiveAsyncSafe(this.receiveCompleted, receivePool.CheckOut())  
+    member this.Stop() =
+      socket.Close(2)  
+    member this.receiveCompleted (args: SocketAsyncEventArgs) =
+      try
+        match args.LastOperation with
+        | SocketAsyncOperation.Receive -&gt;
+          match args.SocketError with
+          | SocketError.Success -&gt;
+            socket.ReceiveAsyncSafe( this.receiveCompleted, receivePool.CheckOut())
+            let data = Array.create args.BytesTransferred 0uy
+            Buffer.BlockCopy(args.Buffer, args.Offset, data, 0, data.Length)
+            let client = args.RemoteEndPoint
+            args.RemoteEndPoint &lt;- null
+            data |&gt; printfn &quot;received data: %A&quot;
+          | _ -&gt; args.SocketError.ToString() |&gt; printfn &quot;socket error on receive: %s&quot;
+        | _ -&gt; failwith &quot;unknown operation, should be receive&quot;
+      finally
+        receivePool.CheckIn(args)  
+    member this.sendCompleted (args: SocketAsyncEventArgs) =
+      try
+        match args.LastOperation with
+        | SocketAsyncOperation.Send -&gt;
+          match args.SocketError with
+          | SocketError.Success -&gt; ()
+          | SocketError.NoBufferSpaceAvailable
+          | SocketError.IOPending
+          | SocketError.WouldBlock -&gt;
+            if not(anyErrors) then
+              anyErrors &lt;- true
+              failwith &quot;Buffer overflow or send buffer timeout&quot;
+          | _ -&gt; args.SocketError.ToString() |&gt; printfn &quot;socket error on send: %s&quot;
+        | _ -&gt; failwith &quot;invalid operation, should be receive&quot;
+      finally
+        sendPool.CheckIn(args)  
+    member this.Send (msg:byte[]) =
+      let s = sendPool.CheckOut()
+      Buffer.BlockCopy(msg, 0, s.Buffer, s.Offset, msg.Length)
+      socket.SendAsyncSafe(this.sendCompleted, s)
+</code></pre><p>Finally here&rsquo;s the TcpListener type.  It is responsible for creating an
+initial Connection object for each client and starts asynchronous sending
+messages to that client once a second, also notice that there is another
+BlockingCollection involved, this is somewhat simpler than the usage in the
+bocketPool as we have no buffer to manage here.</p><ul><li><em>It is possible to fill the initial Buffer property, this causes the buffer to be sent to the client as soon as it has connected to the server, this can be useful to sent initial data to the client, such as protocol definitions etc)</em>
+A finite number of connections can occur before blocking will occur depending
+on the number of AsyncEventArgs in the collection, this stops potential denial
+of service attacks due to too many connection being made.</li></ul><h3 id=tcplistener>TcpListener</h3><pre><code>namespace Fes
+  open System
+  open System.Net
+  open System.Net.Sockets
+  open System.Collections.Generic
+  open System.Collections.Concurrent
+  open System.Threading
+  open SocketExtensions  
+  type TcpListener(maxaccepts, maxsends, maxreceives, size, port, backlog) as this =  
+    let createTcpSocket() =
+      new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)  
+    let createListener (ip:IPAddress, port, backlog) =
+      let s = createTcpSocket()
+      s.Bind(new IPEndPoint(ip, port))
+      s.Listen(backlog); s  
+    let listeningSocket = createListener( IPAddress.Loopback, port, backlog)  
+    let initPool (maxinpool, callback) =
+      let pool = new BlockingCollection&lt;SocketAsyncEventArgs&gt;(maxinpool:int)
+      let rec loop n =
+        match n with
+        | x when x &lt; maxinpool -&gt;
+          let saea = new SocketAsyncEventArgs()
+          saea.Completed |&gt; Observable.add callback
+          pool.Add saea
+          loop (n+1)
+        | _ -&gt; ()
+      loop 0
+      pool  
+    let acceptPool = initPool (maxaccepts, this.acceptcompleted)
+    let newConnection socket = new Connection (maxreceives, maxsends, size, socket)
+    let testMessage = Array.init&lt;byte&gt; 128 (fun _ -&gt; 1uy)
+    let header = Array.init&lt;byte&gt; 1 (fun _ -&gt; 1uy)
+    let mutable disposed = false  
+    //mutable state from original
+    let mutable anyErrors = false
+    let mutable requestCount = 0
+    let mutable numWritten = 0  
+    //async code from original
+    let asyncWriteStockQuote(connection:Connection) = async {
+      do! Async.Sleep 1000
+      connection.Send(testMessage)
+      Interlocked.Increment(&amp;numWritten) |&gt; ignore }  
+    //async code from original
+    let asyncServiceClient (client: Connection) = async {
+      client.Send(header)
+      while true do
+        do! asyncWriteStockQuote(client) }  
+    let startSending connection =
+      Async.Start (async {
+        try
+          use _holder = connection
+          do! asyncServiceClient connection
+        with e -&gt;
+          if not(anyErrors) then
+            anyErrors &lt;- true
+            Console.WriteLine(&quot;server ERROR&quot;)
+          raise e
+        } )  
+    let reportConnections =
+      Interlocked.Increment(&amp;requestCount) |&gt; ignore
+      if requestCount % 1000 = 0 then
+        requestCount |&gt; printfn &quot;%A Clients accepted&quot;  
+    let cleanUp() =
+      if not disposed then
+        disposed &lt;- true
+        listeningSocket.Shutdown(SocketShutdown.Both)
+        listeningSocket.Disconnect(false)
+        listeningSocket.Close()  
+    member this.acceptcompleted (args : SocketAsyncEventArgs) =
+      try
+        match args.LastOperation with
+        | SocketAsyncOperation.Accept -&gt;
+          match args.SocketError with
+          | SocketError.Success -&gt;
+            listeningSocket.AcceptAsyncSafe( this.acceptcompleted, acceptPool.Take())
+            //create new connection
+            let connection = newConnection args.AcceptSocket
+            connection.Start()  
+            //update stats
+            reportConnections   
+            //async start of messages to client
+            startSending connection  
+            //remove the AcceptSocket because we will be reusing args
+            args.AcceptSocket &lt;- null
+          | _ -&gt; args.SocketError.ToString() |&gt; printfn &quot;socket error on accept: %s&quot;
+        | _ -&gt; args.LastOperation |&gt; failwith &quot;Unknown operation, should be accept but was %a&quot;
+      finally
+        acceptPool.Add(args)  
+    member this.start () =
+      listeningSocket.AcceptAsyncSafe( this.acceptcompleted, acceptPool.Take())
+      while true do
+      Thread.Sleep 1000
+      let count = Interlocked.Exchange(&amp;numWritten, 0)
+      count |&gt; printfn &quot;Quotes per sec: %A&quot;  
+    member this.Close() =
+      cleanUp()  
+    interface IDisposable with
+      member this.Dispose() = cleanUp()
+</code></pre><p>Its a fair bit of code to take in at once, so Ill leave you with it to ponder
+over.  Ill be explaining all of the interesting bits in more detail in part
+three&mldr;</p><p>Please feel free to leave any comments you have, especially on better use of
+functional constructs.</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/sockets-and-bockets-1/>Sockets and Bockets 1</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/sockets-and-bockets-part-3/>Sockets and Bockets 3</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/sockets-and-bockets-part-2/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

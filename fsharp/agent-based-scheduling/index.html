@@ -1,0 +1,116 @@
+<!doctype html><html><head><title>Agent based scheduling &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/agent-based-scheduling/>Agent based scheduling</a></h1><span class=post-date>Jul 3, 2011</span><div class=post-content><p>One of the areas that I am very interested in is agents and I have been doing
+quite a lot of work in this area lately.</p><p>Agents can be used for a multitude of different purposes ranging from:
+isolated message passing, object caching, finite state machines, web crawling,
+and even reactive user interfaces.  One of the ideas that I have been looking
+into lately is agent based scheduling.</p><h2 id=scheduleragent>SchedulerAgent</h2><p>A simple Agent based scheduler:</p><pre><code>    module AgentUtilities
+    open System
+    open System.Threading 
+ 
+    //Agent alias for MailboxProcessor
+    type Agent&lt;'T&gt; = MailboxProcessor&lt;'T&gt; 
+ 
+    /// Two types of Schedule messages that can be sent
+    type ScheduleMessage&lt;'a&gt; =
+      | Schedule of ('a -&gt; unit) * 'a * TimeSpan * TimeSpan * CancellationTokenSource AsyncReplyChannel
+      | ScheduleOnce of ('a -&gt; unit) * 'a * TimeSpan * CancellationTokenSource AsyncReplyChannel
+  
+    /// An Agent based scheduler
+    type SchedulerAgent&lt;'a&gt;()=   
+      let scheduleOnce delay msg receiver (cts: CancellationTokenSource)=
+        async { do! Async.Sleep(delay)
+            if (cts.IsCancellationRequested)
+            then cts.Dispose()
+            else msg |&gt; receiver }  
+      let scheduleMany initialDelay  msg receiver delayBetween cts=
+        let rec loop time (cts: CancellationTokenSource) =
+           async { do! Async.Sleep(time)
+               if (cts.IsCancellationRequested)
+               then cts.Dispose()
+               else msg |&gt; receiver
+               return! loop delayBetween cts}
+        loop initialDelay cts  
+      let scheduler = Agent.Start(fun inbox -&gt;
+        let rec loop() = async {
+          let! msg = inbox.Receive()
+          let cs = new CancellationTokenSource()
+          match msg with
+          | Schedule(receiver, msg:'a, initialDelay, delayBetween, replyChan) -&gt;
+            Async.StartImmediate(scheduleMany
+                         (int initialDelay.TotalMilliseconds)
+                         msg
+                         receiver
+                         (int delayBetween.TotalMilliseconds)
+                         cs )
+            replyChan.Reply(cs)
+            return! loop()
+          | ScheduleOnce(receiver, msg:'a, delay, replyChan) -&gt;
+            Async.StartImmediate(scheduleOnce
+                         (int delay.TotalMilliseconds)
+                         msg
+                         receiver
+                         cs)
+            replyChan.Reply(cs)
+            return! loop()
+        }
+        loop())  
+      ///Schedules a message to be sent to the receiver after the initialDelay.
+      ///  If delaybetween is specified then the message is sent reoccuringly at the delaybetween interval.
+      member this.Schedule(receiver, msg, initialDelay, ?delayBetween) =
+        let buildMessage replyChan =
+          match delayBetween with
+          | Some(x) -&gt; Schedule(receiver,msg,initialDelay, x, replyChan)
+          | _ -&gt; ScheduleOnce(receiver,msg,initialDelay, replyChan)
+        scheduler.PostAndReply (fun replyChan -&gt; replyChan |&gt; buildMessage)
+</code></pre><p>The structure of the SchedulerAgent broken down into sections below:</p><h3 id=schedulemessage>ScheduleMessage</h3><p>Lines <strong>9-11</strong> (<code>type ScheduleMessage&lt;'a> =</code>) show the definition of ScheduleMessage. This is a discriminated
+union of two different types of Schedule message.</p><h4 id=scheduleonce>ScheduleOnce</h4><p>ScheduleOnce has four parameters:</p><ol><li>A function which is called at the schedule time (&lsquo;a -> unit).</li><li>The message that is sent at the schedules time (&lsquo;a).</li><li>A TimeSpan which is the length of time to wait before triggering the schedule.</li><li>An AsyncReplyChannel(CancellationTokenSource AsyncReplyChannel).  This is used to return a CancellationTokenSource which can be used to cancel the Schedule.</li></ol><h4 id=schedule>Schedule</h4><p>Schedule has five parameters which are as follows:</p><ol><li>A function which is called at the schedule time (&lsquo;a -> unit).</li><li>The message that is sent at the schedules time (&lsquo;a).</li><li>A TimeSpan which is the initial length of time to wait before first triggering the schedule function.</li><li>A TimeSpan which is used as an interval between each subsequent triggering of the schedule function.</li><li>An AsyncReplyChannel(CancellationTokenSource AsyncReplyChannel).  This is used to return a CancellationTokenSource which can be used to cancel the Schedule.</li></ol><h2 id=scheduleragent-1>SchedulerAgent</h2><h3 id=scheduleonce-1>scheduleOnce</h3><p>Lines <strong>16-20</strong> define an async workflow, which asynchronously sleeps for the specified time before checking that the schedule hasn&rsquo;t been cancelled before finally calling the schedule function.</p><h3 id=schedulemany>scheduleMany</h3><p>Lines <strong>22-29</strong> define a recursive async workflow, which asynchronously sleeps for the specified interval (<em>3rd Parameter</em>) before checking the schedule hasn&rsquo;t been cancelled before finally calling the schedule function. The <strong>loop</strong> function is then called passing in the second TimeSpan interval <em>(4th Parameter)</em>.</p><h3 id=scheduler>scheduler</h3><p>This is the main processing loop for the agent.  A recursive <strong>loop</strong> function
+is declared on line <strong>32</strong>.  On line <strong>33</strong> the agent waits for a message
+to arrive.  Once a message arrives a <strong>CancellationTokenSource</strong> is created on
+line <strong>36</strong> which can be used to cancel an already scheduled message.
+Pattern matching is used on line <strong>35</strong> to find the type of message that has
+been received.  The first pattern matching block on lines <strong>36-43</strong> matches
+the <strong>Schedule</strong> message.  The parameters from the Schedule message are passed
+into the <strong>scheduleMany</strong> function.  This is then invoked asynchronously via
+the <strong>Async.StartImmediate</strong> function.  The CancellationTokenSource is now
+returned to the caller on line <strong>43</strong>. This allows the caller to cancel an
+already running schedule.   Finally the recursive <strong>loop</strong> function is called
+on line <strong>44</strong>.  The second pattern matching block on lines <strong>45-52</strong> is much
+the same passing the parameters from the <strong>ScheduleOnce</strong> message into the
+<strong>scheduleOnce</strong> function, again this is invoked via the
+<strong>Async.StartImmediate</strong> function.  Like the Schedule message the
+CancellationTokenSource returned on line <strong>51</strong> and the recursive <strong>loop</strong>
+function is called on line <strong>52</strong>.</p><p>The agent is then started on line <strong>51</strong> by calling the <strong>loop</strong> function for the first time.</p><h3 id=members>Members</h3><p>The SchedulerAgent has only a single member <strong>Schedule</strong>. This member
+function takes three parameters and an optional parameter <strong>delayBetween</strong>.  A
+function called <strong>buildMessage</strong> on line <strong>59</strong> uses the optional parameter
+with pattern matching to determine whether a <strong>ScheduleOnce</strong> or a
+<strong>Schedule</strong> message is created.  The agent is posted the correct message type
+on line <strong>63</strong> using the synchronous call scheduler.PostAndReply.  We use a
+synchronous call to return the cancellationTokenSource immediately, and this
+can be used to cancel a running schedule.</p><h2 id=sample-application>Sample Application</h2><p>Shows a test harness that creates and uses a simple string based message scheduler:</p><pre><code>    open AgentUtilities
+    open System
+    open System.Threading  
+    let scheduler = SchedulerAgent&lt;_&gt;()
+    let printer message =
+      printfn &quot;%s: %s&quot; (DateTime.Now.TimeOfDay.ToString()) message  
+    let singlecancel = scheduler.Schedule(printer,
+                        &quot;Hello from the scheduler&quot;,
+                        TimeSpan(0,0,0,5))  
+    let multicancel = scheduler.Schedule( printer,
+                        &quot;Hello from the multi scheduler&quot;,
+                        TimeSpan(0,0,0,5),
+                        TimeSpan(0,0,0,0,500))  
+    printfn &quot;Press any key to cancel.&quot;
+    Console.ReadKey() |&gt; ignore  
+    //Cancel the multi scheduler
+    multicancel.Cancel()
+    printfn &quot;Cancelled, press any key to exit.&quot;
+    Console.ReadKey() |&gt; ignore
+</code></pre><p>I hope this gives you a feel for what you can do with agent based scheduling.
+The library here could be expanded further in several ways.  You could replace
+the fixed message with a message generator function or even an agent based
+message generator.  If the schedule function was abstracted somewhat it could
+be made to accept an agent as the receiver.</p><p>One of the key areas I am looking at is building a distributed agent library
+that would allow an agent to communicate over network layers transparently.  A
+scheduler agent would be even more powerful in this environment.  I could
+envisage them used for a many different things in this environment:  heart
+beat messages, performance sampling, diagnostics and testing.</p><p>Until next time&mldr;</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/agents-and-objectpools/>Agents and ObjectPools</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/from-c-to-f-a-developers-perspective/>From C# to F#: A Developer's Perspective</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/agent-based-scheduling/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

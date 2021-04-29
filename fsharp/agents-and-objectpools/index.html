@@ -1,0 +1,172 @@
+<!doctype html><html><head><title>Agents and ObjectPools &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/agents-and-objectpools/>Agents and ObjectPools</a></h1><span class=post-date>Jun 5, 2011</span><div class=post-content><p>Everyone knows F# agents are cool right?  Well here&rsquo;s yet another example of how versatile they can be&mldr;</p><p>There was a series of posts last April by Stephen Toub from the <a href=http://blogs.msdn.com/b/pfxteam/>pfxteam</a> at Microsoft.  I was reading
+through some of the posts again the other day and thought some of the ideas presented there would make interesting projects in F# to demonstrate the
+flexibility and succinctness of the language.  I thought the <a href=http://blogs.msdn.com/b/pfxteam/archive/2010/04/13/9990427.aspx>ObjectPool</a>
+example would make an interesting project in F# using agents aka MailboxProcessors. An ObjectPool is basically a pool of objects that have been
+pre-created so that you can grab one and use it, and then place it back in the pool when you&rsquo;re finished.  They are useful in situations where the cost of
+creating object from scratch is very high or you want to cut down on allocations in the garbage collector.</p><p>First of all heres the C# code as it was presented in the Parallel Extensions download:</p><pre><code>using System.Collections.Generic;
+using System.Diagnostics;  
+namespace System.Collections.Concurrent
+{
+  /// &lt;summary&gt;Provides a thread-safe object pool.&lt;/summary&gt;
+  /// &lt;typeparam name=&quot;T&quot;&gt;Specifies the type of the elements stored in the pool.&lt;/typeparam&gt;
+  [DebuggerDisplay(&quot;Count={Count}&quot;)]
+  [DebuggerTypeProxy(typeof(IProducerConsumerCollection_DebugView&lt;&gt;))]
+  public sealed class ObjectPool&lt;T&gt; : ProducerConsumerCollectionBase&lt;T&gt;
+  {
+    private readonly Func&lt;T&gt; _generator;  
+    /// &lt;summary&gt;Initializes an instance of the ObjectPool class.&lt;/summary&gt;
+    /// &lt;param name=&quot;generator&quot;&gt;The function used to create items when no items exist in the pool.&lt;/param&gt;
+    public ObjectPool(Func&lt;T&gt; generator) : this(generator, new ConcurrentQueue&lt;T&gt;()) { }  
+    /// &lt;summary&gt;Initializes an instance of the ObjectPool class.&lt;/summary&gt;
+    /// &lt;param name=&quot;generator&quot;&gt;The function used to create items when no items exist in the pool.&lt;/param&gt;
+    /// &lt;param name=&quot;collection&quot;&gt;The collection used to store the elements of the pool.&lt;/param&gt;
+    public ObjectPool(Func&lt;T&gt; generator, IProducerConsumerCollection&lt;T&gt; collection)
+      : base(collection)
+    {
+      if (generator == null) throw new ArgumentNullException(&quot;generator&quot;);
+      _generator = generator;
+    }  
+    /// &lt;summary&gt;Adds the provided item into the pool.&lt;/summary&gt;
+    /// &lt;param name=&quot;item&quot;&gt;The item to be added.&lt;/param&gt;
+    public void PutObject(T item) { base.TryAdd(item); }  
+    /// &lt;summary&gt;Gets an item from the pool.&lt;/summary&gt;
+    /// &lt;returns&gt;The removed or created item.&lt;/returns&gt;
+    /// &lt;remarks&gt;If the pool is empty, a new item will be created and returned.&lt;/remarks&gt;
+    public T GetObject()
+    {
+      T value;
+      return base.TryTake(out value) ? value : _generator();
+    }  
+    /// &lt;summary&gt;Clears the object pool, returning all of the data that was in the pool.&lt;/summary&gt;
+    /// &lt;returns&gt;An array containing all of the elements in the pool.&lt;/returns&gt;
+    public T[] ToArrayAndClear()
+    {
+      var items = new List&lt;T&gt;();
+      T value;
+      while (base.TryTake(out value)) items.Add(value);
+      return items.ToArray();
+    }  
+    protected override bool TryAdd(T item)
+    {
+      PutObject(item);
+      return true;
+    }  
+    protected override bool TryTake(out T item)
+    {
+      item = GetObject();
+      return true;
+    }
+  }
+}
+</code></pre><p>There&rsquo;s also a base class which looks like this:</p><pre><code>/// &lt;summary&gt;
+/// Provides a base implementation for producer-consumer collections that wrap other
+/// producer-consumer collections.
+/// &lt;/summary&gt;
+/// &lt;typeparam name=&quot;T&quot;&gt;Specifies the type of elements in the collection.&lt;/typeparam&gt;
+[Serializable]
+public abstract class ProducerConsumerCollectionBase&lt;T&gt; : IProducerConsumerCollection&lt;T&gt;
+{
+private readonly IProducerConsumerCollection&lt;T&gt; _contained;  
+/// &lt;summary&gt;Initializes the ProducerConsumerCollectionBase instance.&lt;/summary&gt;
+/// &lt;param name=&quot;contained&quot;&gt;The collection to be wrapped by this instance.&lt;/param&gt;
+protected ProducerConsumerCollectionBase(IProducerConsumerCollection&lt;T&gt; contained)
+{
+  if (contained == null) throw new ArgumentNullException(&quot;contained&quot;);
+  _contained = contained;
+}  
+/// &lt;summary&gt;Gets the contained collection.&lt;/summary&gt;
+protected IProducerConsumerCollection&lt;T&gt; ContainedCollection { get { return _contained; } }  
+/// &lt;summary&gt;Attempts to add the specified value to the end of the deque.&lt;/summary&gt;
+/// &lt;param name=&quot;item&quot;&gt;The item to add.&lt;/param&gt;
+/// &lt;returns&gt;true if the item could be added; otherwise, false.&lt;/returns&gt;
+protected virtual bool TryAdd(T item) { return _contained.TryAdd(item); }  
+/// &lt;summary&gt;Attempts to remove and return an item from the collection.&lt;/summary&gt;
+/// &lt;param name=&quot;item&quot;&gt;
+/// When this method returns, if the operation was successful, item contains the item removed. If
+/// no item was available to be removed, the value is unspecified.
+/// &lt;/param&gt;
+/// &lt;returns&gt;
+/// true if an element was removed and returned from the collection; otherwise, false.
+/// &lt;/returns&gt;
+protected virtual bool TryTake(out T item) { return _contained.TryTake(out item); }  
+/// &lt;summary&gt;Attempts to add the specified value to the end of the deque.&lt;/summary&gt;
+/// &lt;param name=&quot;item&quot;&gt;The item to add.&lt;/param&gt;
+/// &lt;returns&gt;true if the item could be added; otherwise, false.&lt;/returns&gt;
+bool IProducerConsumerCollection&lt;T&gt;.TryAdd(T item) { return TryAdd(item); }  
+/// &lt;summary&gt;Attempts to remove and return an item from the collection.&lt;/summary&gt;
+/// &lt;param name=&quot;item&quot;&gt;
+/// When this method returns, if the operation was successful, item contains the item removed. If
+/// no item was available to be removed, the value is unspecified.
+/// &lt;/param&gt;
+/// &lt;returns&gt;
+/// true if an element was removed and returned from the collection; otherwise, false.
+/// &lt;/returns&gt;
+bool IProducerConsumerCollection&lt;T&gt;.TryTake(out T item) { return TryTake(out item); }  
+/// &lt;summary&gt;Gets the number of elements contained in the collection.&lt;/summary&gt;
+public int Count { get { return _contained.Count; } }  
+/// &lt;summary&gt;Creates an array containing the contents of the collection.&lt;/summary&gt;
+/// &lt;returns&gt;The array.&lt;/returns&gt;
+public T[] ToArray() { return _contained.ToArray(); }  
+/// &lt;summary&gt;Copies the contents of the collection to an array.&lt;/summary&gt;
+/// &lt;param name=&quot;array&quot;&gt;The array to which the data should be copied.&lt;/param&gt;
+/// &lt;param name=&quot;index&quot;&gt;The starting index at which data should be copied.&lt;/param&gt;
+public void CopyTo(T[] array, int index) { _contained.CopyTo(array, index); }  
+/// &lt;summary&gt;Copies the contents of the collection to an array.&lt;/summary&gt;
+/// &lt;param name=&quot;array&quot;&gt;The array to which the data should be copied.&lt;/param&gt;
+/// &lt;param name=&quot;index&quot;&gt;The starting index at which data should be copied.&lt;/param&gt;
+void ICollection.CopyTo(Array array, int index) { _contained.CopyTo(array, index); }  
+/// &lt;summary&gt;Gets an enumerator for the collection.&lt;/summary&gt;
+/// &lt;returns&gt;An enumerator.&lt;/returns&gt;
+public IEnumerator&lt;T&gt; GetEnumerator() { return _contained.GetEnumerator(); }  
+/// &lt;summary&gt;Gets an enumerator for the collection.&lt;/summary&gt;
+/// &lt;returns&gt;An enumerator.&lt;/returns&gt;
+IEnumerator IEnumerable.GetEnumerator() { return GetEnumerator(); }  
+/// &lt;summary&gt;Gets whether the collection is synchronized.&lt;/summary&gt;
+bool ICollection.IsSynchronized { get { return _contained.IsSynchronized; } }  
+/// &lt;summary&gt;Gets the synchronization root object for the collection.&lt;/summary&gt;
+object ICollection.SyncRoot { get { return _contained.SyncRoot; } }
+</code></pre><p><strong>Wow!</strong>  Thats a fair bit of code in C#, fair enough there is a lot of noise in the xml doc comments, but theres also a lot of boiler plate code in there too.</p><p>Ok now we have gotten that out of the way heres the good bit.  </p><p>Below is an agent based design which implements the same functionality but uses a lot less code.</p><pre><code>module Poc
+
+//Agent alias for MailboxProcessor
+type Agent&lt;'T&gt; = MailboxProcessor&lt;'T&gt;
+ 
+///One of three messages for our Object Pool agent
+type PoolMessage&lt;'a&gt; =
+  | Get of AsyncReplyChannel&lt;'a&gt;
+  | Put of 'a * AsyncReplyChannel&lt;unit&gt;
+  | Clear of AsyncReplyChannel&lt;List&lt;'a&gt;&gt;
+ 
+/// Object pool representing a reusable pool of objects
+type ObjectPool&lt;'a&gt;(generate: unit -&gt; 'a, initialPoolCount) =
+  let initial = List.init initialPoolCount (fun (x) -&gt; generate())
+  let agent = Agent.Start(fun inbox -&gt;
+    let rec loop(x) = async {
+      let! msg = inbox.Receive()
+      match msg with
+      | Get(reply) -&gt;
+        let res = match x with
+              | a :: b -&gt;
+                reply.Reply(a);b
+              | [] as empty-&gt;
+                reply.Reply(generate());empty
+        return! loop(res)
+      | Put(value, reply)-&gt;
+        reply.Reply()
+        return! loop(value :: x)
+      | Clear(reply) -&gt;
+        reply.Reply(x)
+        return! loop(List.empty&lt;'a&gt; )
+    }
+    loop(initial))  
+  /// Clears the object pool, returning all of the data that was in the pool.
+  member this.ToListAndClear() =
+    agent.PostAndAsyncReply(Clear)
+  /// Puts an item into the pool
+  member this.Put(item) =
+    agent.PostAndAsyncReply((fun ch -&gt; Put(item, ch)))
+  /// Gets an item from the pool or if there are none present use the generator
+  member this.Get(item) =
+    agent.PostAndAsyncReply(Get)
+</code></pre><p>We have a discriminated union (PoolMessage) which describes the messages that we are going to use with this agent, they are pretty straight forward to follow.  </p><ul><li><strong>Get</strong> simply returns either a stored item or generates a brand new one using the generator function which is passed into the ObjectPools constructor <strong>(generate: unit -> &lsquo;a)</strong>.  </li><li><strong>Put</strong> simply adds the item onto the internal list.</li><li><strong>Clear</strong> simply returns the current pool and then clears it.</li></ul><p>The core processing all happens in the <strong>async{}</strong> block, we simply wait for a message to arrive, then we pattern match on one of the messages either Get,Put, or Clear.</p><p><strong>Get</strong> takes an item from the internal list if there are items present, otherwise it invokes the generator function and returns a newly generated object.</p><p>For a <strong>Put</strong> operation we use the cons <strong>(::)</strong> operator to add the item onto the internal list via the recursive loop.</p><p>For the <strong>Clear</strong> operation we return the entire list then return an empty list to the recursive loop.</p><p>I think you will agree this is a nice succinct example of the flexibility and elegance of agents and yet another reason to use F# for more server side
+activities.  It&rsquo;s not simply a language for the mathematical and finance orientated developers.</p><p>For anyone interested all of the code should be in my <a href=http://bit.ly/mDQyfH>GitHub repository </a>to download.</p><p>Thanks to <a href=http://tomasp.net/>Tomas Petricek</a> for suggesting using the recursive loop to pass the list rather than using a ref cell and the (<strong>:=</strong>) operator.</p><p>Until next time&mldr;</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/pipeline-processing-3/>Pipeline processing 3</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/agent-based-scheduling/>Agent based scheduling</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/agents-and-objectpools/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

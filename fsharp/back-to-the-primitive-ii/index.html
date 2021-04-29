@@ -1,0 +1,58 @@
+<!doctype html><html><head><title>Back to the Primitive II &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/back-to-the-primitive-ii/>Back to the Primitive II</a></h1><span class=post-date>Apr 22, 2012</span><div class=post-content><p>In the last post I discussed an asynchronous version of the <code>ManualResetEvent</code> and as promised this time we will be looking at an
+asynchronous version of the <code>AutoResetEvent</code>. I&rsquo;m using <a href=http://blogs.msdn.com/b/pfxteam/archive/2012/02/11/10266923.aspx>Stephen Toubs post</a>
+as reference and we will be building a version that is functional in style that maps straight into asynchronous work flows without and conversion
+or adaptors.</p><h3 id=what-is-an-autoresetevent>What is an AutoResetEvent?</h3><p>An <code>AutoResetEvent</code> can be described as a turnstile mechanism, it lets a single waiting person through before re-latching
+waiting for the next signal. This is opposed to a <code>ManualResetEvent</code> which functions like an ordinary gate. Calling Set opens
+the gate, allowing any number of threads that are waiting to be let through. Calling Reset closes the gate.</p><h3 id=asyncautoresetevent>AsyncAutoResetEvent</h3><p>First of all here is the shape of the type that we will be building:</p><pre><code>type AsyncAutoResetEvent =
+    new : ?reusethread:bool -&gt; AsyncAutoResetEvent
+    member Set : unit -&gt; unit
+    member WaitAsync : unit -&gt; Async&lt;bool&gt;
+</code></pre><p>Fairly simple: implied constructor, <code>Set</code> and <code>WaitAsync</code> members.</p><h3 id=implied-constructor>Implied Constructor</h3><p>Thinking about this logically we may need the following items:</p><ul><li>A queue mechanism to store asynchronous waiters - <code>let mutable awaits = Queue&lt;_>()</code>.</li><li>A way of knowing if a signal has been made in the absence of any waiters - <code>let mutable signalled = false</code>.</li><li>We can also declare a short-circuit asynchronous workflow for the situation that <code>Set()</code> is called before <code>WaitAsync()</code></li></ul><ul><li><code>let completed = async.Return true</code>. This will save us constructing an <code>AsyncResultCell&lt;_></code> and going though the
+rest of the asynchronous mechanism.</li></ul><p>Also notice that an optional parameter called <code>reusethread</code> is defined, we use the <code>?</code> prefix when defining it to make it
+optional. We then make use of the <code>defaultArg</code> function to give it a default value of false if a one is not passed in. This
+will be used in the <code>Set</code> operation to determine if the code will run on the same thread or a thread in the ThreadPool.</p><pre><code>open System
+open System.Threading
+open System.Collections.Generic
+ 
+    type AsyncAutoResetEvent(?reusethread) =
+		let mutable awaits = Queue&lt;_&gt;()
+		let mutable signalled = false
+        let completed = async.Return true
+        let reuseThread = defaultArg reusethread false
+</code></pre><h3 id=waitasync>WaitAsync()</h3><p>The first step is to use a locking construct to control access to the mutable queue <code>awaits</code>. Inside this lock we
+check to see if <code>signalled</code> is true and if so we reset it to false and return our pre-built <code>completed</code> asynchronous workflow. If
+signalled is false then we create a new <code>AsyncResultCell&lt;_></code> and add it to the queue then return the <code>AsyncResult</code> to the caller.</p><pre><code>        member x.WaitAsync() =
+            lock awaits (fun () -&gt;
+                if signalled then
+                    signalled &lt;- false
+                    completed
+                else
+                    let are = AsyncResultCell&lt;_&gt;()
+                    awaits.Enqueue are
+                    are.AsyncResult)
+</code></pre><h3 id=set>Set()</h3><p>We first declare a function called <code>getWaiter()</code>, we use this function to return an <a href=http://msdn.microsoft.com/en-us/library/dd233245.aspx>option type</a>
+that is either <code>Some AsyncResultCell&lt;bool></code> or <code>None</code>. We use the lock function to control access to the mutable queue <code>lock awaits</code>. Once
+inside the lock we use pattern matching to capture <code>awaits.Count</code> and <code>signalled</code>:</p><ul><li>The first pattern match <code>(x,_)</code> checks if there are any waiters (<code>awaits.Count > 0</code>) and then dequeues an <code>AsyncResultCell&lt;bool></code> from the
+queue and returns it within an option type: <code>Some &lt;| awaits.Dequeue()</code>.</li><li>The second pattern match <code>(_,y)</code> checks whether <code>signalled</code> is set to false before setting its value to true. This causes next <code>WaitAsync()</code>
+caller to get the short-circuited value <code>completed</code>. This means that an <code>AsyncResultCell&lt;bool></code> does not need to be created and go though the
+whole async mechanism. We then return <code>None</code> as there is no waiter to be notified.</li><li>The final pattern match <code>(_,_)</code> is used when there are no waiting callers and <code>signalled</code> has already being set, there is simply nothing to do in
+this situation so we return <code>None</code>.</li></ul><p>We use the <code>getWaiter()</code> function via pattern match. If we have a result i.e. Some AsyncResultCell then we call <code>RegisterResult</code>
+passing in <code>AsyncOK(true)</code> to indicate a completion. Notice that we also pass in the <code>reuseThread</code> boolean that was declared as part of the
+constructor. If <code>reuseThread</code> is true then the notification to the waiter happens <strong>synchronously</strong> use this with care! Personally I would stick
+with the default of false to ensure that the operation is completed via the thread pool, unless you have a performance critical reason and the
+waiting code that executes is <strong>very fast</strong>.</p><pre><code>		member x.Set() =
+		    let getWaiter()=
+		        lock awaits (fun () -&gt;
+		            match (awaits.Count, signalled) with
+		            | (x,_) when x &gt; 0 -&gt; Some &lt;| awaits.Dequeue()
+		            | (_,y) when not y -&gt; signalled &lt;- true;None
+		            | (_,_) -&gt; None)
+		    match getWaiter() with
+		    | Some a -&gt; a.RegisterResult(AsyncOk(true), reuseThread)
+		    | None _ -&gt; ()
+</code></pre><p>The reason for using the <code>getWaiter()</code> function is to separate the locking function away from the notification, if <code>RegisterResult</code>
+was called within the lock and <code>reuseThread</code> was true then the awaiting function would be called synchronously within the lock which
+would not be a very good situation to be in.</p><p>So there we have it, I could take this series further and convert the other primitives that Stephen Toub describes but there should be
+enough information in these two posts to set you on your way. If anyone would like me to complete the series then let me know. I
+may well finish them off and post them on GitHub in the future, time permitting.</p><p>Thanks for tuning in, until next time&mldr;</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/back-to-the-primitive/>Back to the Primitive</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/the-lurking-horror/>The Lurking Horror</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/back-to-the-primitive-ii/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

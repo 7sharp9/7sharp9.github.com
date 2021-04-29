@@ -1,0 +1,37 @@
+<!doctype html><html><head><title>Are you my type? &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/2015-03-30-are-you-my-type/>Are you my type?</a></h1><span class=post-date>Mar 30, 2015</span><div class=post-content><p>Did you know there was more to the type matching operator than just pattern matching and exception handling?</p><p>The type matching operator is defined thus: <code>:?</code> It can be used by <a href=https://msdn.microsoft.com/en-gb/library/dd547125.aspx>pattern matching</a> to match on a specific type. For example, you might want to test that an object is a certain type or deal with an object being one of several different types. Pattern matching on types is your friend here:</p><pre><code>match symbolUse.Symbol with
+| :? FSharpMemberOrFunctionOrValue
+| :? FSharpUnionCase
+| :? FSharpEntity
+| :? FSharpField
+| :? FSharpGenericParameter
+| :? FSharpActivePatternCase
+| :? FSharpParameter
+| :? FSharpStaticParameter -&gt;
+    match getSymbolDeclarationLocation symbolUse currentFile solution with
+    | SymbolDeclarationLocation.External -&gt; false
+    | SymbolDeclarationLocation.Unknown -&gt; false
+    | _ -&gt; true
+| _ -&gt; false
+</code></pre><p>During pattern matching you can also use the <code>as</code> assignment operator to assign a named binding to the match so you can use it directly. This is somewhat akin to using <code>is</code> and <code>as</code> in C#, or using an <code>as</code> and then a <code>null</code> check. Yuck! None of that kind of thing in F#:</p><pre><code>let isPrivateToFile = 
+    match symbolUse.Symbol with
+    | :? FSharpMemberOrFunctionOrValue as m -&gt; not m.IsModuleValueOrMember
+    | :? FSharpEntity as m -&gt; m.Accessibility.IsPrivate
+    | :? FSharpGenericParameter -&gt; true
+    | :? FSharpUnionCase as m -&gt; m.Accessibility.IsPrivate
+    | :? FSharpField as m -&gt; m.Accessibility.IsPrivate
+    | _ -&gt; false
+</code></pre><p>It can also be used in <a href=https://msdn.microsoft.com/en-us/library/dd233194.aspx>exception handing</a> to match a specific type of exception, as in this example where <code>TimeoutExceptions</code> are caught:</p><pre><code>member x.GetDeclarationSymbols(line, col, lineStr) = 
+    match infoOpt with 
+    | None -&gt; None
+    | Some (checkResults, parseResults) -&gt; 
+        let longName,residue = Parsing.findLongIdentsAndResidue(col, lineStr)
+        // Get items &amp; generate output
+        try
+            let results = 
+                Async.RunSynchronously (checkResults.GetDeclarationListSymbols(Some parseResults, line, col, lineStr, longName, residue, fun _ -&gt; false), timeout = ServiceSettings.blockingTimeout )
+            Some (results, residue)
+        with :? TimeoutException -&gt; None
+</code></pre><p>A final use for <code>:?</code> that people either don&rsquo;t tend to use or know about, is during a normal expression assignment. In this example <code>item :? DotNetProject</code> would evaluate to true when <code>item</code> is a <code>DotNetProject</code>.</p><pre><code>override x.SupportsItem(item:IBuildTarget) =
+    item :? DotNetProject
+</code></pre><p>Although not used that often I find the <code>:?</code> operator to be really useful.</p><p>As usual F# helps to keep things short, succinct, and sweet!</p><p>Until next time!</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/2014-12-07-terror-from-the-deep/>Terror From The Deep</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/meta-matic/>Meta-Matic</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/2015-03-30-are-you-my-type/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

@@ -1,0 +1,50 @@
+<!doctype html><html><head><title>Creating fuse applications with fable &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/2016-07-06-fable-fuse-template/>Creating fuse applications with fable</a></h1><span class=post-date>Jun 7, 2016</span><div class=post-content><p>So as promised here&rsquo;s a guide to creating your first <strong>fable |> fuse</strong> application</p><p>I&rsquo;ve made a template available so this can be tried out quickly and easily, I&rsquo;ll run through the
+requirements and describe whats in the template.</p><h1 id=requirements>Requirements</h1><p>First of all here are the requirements.</p><h2 id=yeoman>Yeoman</h2><p>As <a href=http://fsprojects.github.io/Fable/>fable</a> uses <a href=https://docs.npmjs.com/getting-started/what-is-npm>npm modules</a> for dependencies <strong>fable |> fuse</strong> template will also be based
+on them. I have used <a href=http://fsprojects.github.io/Fable/docs.html>Yeoman</a> as it&rsquo;s very flexible and works nicely.</p><p>So what you need to get Yeoman is:</p><pre><code>npm install -g yo
+</code></pre><p>And then to install the <strong>fable |> fuse</strong> template for Yeoman:</p><pre><code>npm install -g generator-fable-fuse
+</code></pre><p>Nice and easy.</p><h2 id=fable>Fable</h2><p>Installing Fable is covered in the <a href=http://fsprojects.github.io/Fable/docs.html>Fable documentation</a>, but it&rsquo;s essentially just another npm install:</p><pre><code>npm install -g fable-compiler
+</code></pre><h2 id=fuse>Fuse</h2><p>Fuse can be downloaded at their site <a href=https://www.fusetools.com/downloads>here</a></p><p>That&rsquo;s pretty much all the requirements, let&rsquo;s try this out!</p><hr><h1 id=creating-a-fable--fuse-application>Creating a <strong>fable |> fuse</strong> application?</h1><p>OK, so with everything installed how do you get going?</p><p>This is really easy:</p><pre><code>mkdir fable-fuse-test
+cd fable-fuse-test
+yo fable-fuse
+</code></pre><p>And then follow the prompts, here&rsquo;s a <a href=https://asciinema.org>asciinema</a> session showing the process:</p><figure class=8u><a href="https://asciinema.org/a/9eqmwurfreaspzsmrm0f5ezc9?size=medium&speed=1.75"><img src=https://asciinema.org/a/9eqmwurfreaspzsmrm0f5ezc9.png></a></figure><p>Now that the template has been created let&rsquo;s have a look at whats inside.</p><hr><h1 id=project-structure>Project Structure</h1><p>The structure of a <strong>fable |> fuse</strong> application is as follows <em>(Using a project name of test)</em>:</p><pre><code>├── App
+│   ├── MainView.ux
+│   └── test.unoproj
+├── build.bat
+├── build.sh
+├── node_modules
+│   ├── fable-core
+│   ├── fable-fuse
+│   └── fable-import-fetch
+├── package.json
+└── src
+    ├── fableconfig.json
+    ├── test.fs
+    └── test.fsproj
+</code></pre><p>Lets go through the root files first</p><h2 id=packagejson>package.json</h2><p>This file has the dependencies for <code>fable |> fuse</code>. Currently these are:</p><ul><li><strong>fable-core</strong> : This has the main definitions for Fable.</li><li><strong>fable-fuse</strong> : This has the bindings for the Fuse JavaScript API&rsquo;s.</li><li><strong>fable-import-fetch</strong> : This has the F# bindings for JavaScript Fetch API.</li></ul><h2 id=buildsh--buildbat>build.sh / build.bat</h2><p>These two files contain the script to transpile the F# source into JavaScript. So upon typing <code>./build.sh</code> the F# files
+will be transpiled into JavaScript and placed into the <code>App/js</code> folder. In addition <a href=http://fsprojects.github.io/Fable/>Fable</a> will continue to watch the
+F# files and transpile the files if they change so you get realtime updating of the <a href=https://www.fusetools.com/>fuse</a> application.</p><p>Now the directories:</p><h2 id=app>App</h2><p>The <code>App</code> directory has all the necessary files that <a href=https://www.fusetools.com/>Fuse</a> requires to build</p><h3 id=testunoproj>test.unoproj</h3><p>This is the project file for Fuse, it has settings for the different platforms and controls which gets embedded in the application.</p><h3 id=mainviewux>MainView.ux</h3><p>This is the main view markup file for the user interface.</p><h2 id=src>src</h2><p>The <code>src</code> folder has all the F# source files that <a href=http://fsprojects.github.io/Fable/>Fable</a> transpiles into JavaScript.</p><h3 id=fableconfigjson>fableconfig.json</h3><p>This is the configuration file for Fable which allows you to run scrip before or after compilation and set various defaults.</p><h3 id=testfs>test.fs</h3><p>This is the main source file for F# and is the same as the one you saw in the previous post:</p><pre><code>namespace App
+open Fable.Core
+open Fuse
+open Fable.Import
+open Fable.Import.Fetch
+
+module test =
+    let data = Observable.create()
+
+    promise {
+        let! req = GlobalFetch.fetch (Url &quot;http://az664292.vo.msecnd.net/files/ZjPdBhWNdPRMI4qK-colors.json&quot;)
+        let! json = req.json ()
+        do (data.value &lt;- json) } |&gt; ignore
+</code></pre><p>This is fairly easy to follow, the <code>promise</code> block is a custom <a href=https://msdn.microsoft.com/visualfsharpdocs/conceptual/computation-expressions-%5Bfsharp%5D>computation expression</a> that allows each successful JavaScript
+promise to execute before the next promise is ran. In this example <code>GlobalFetch.fetch</code> and <code>req.json()</code> both return JavaScript
+promises. The promise block runs the <code>GlobalFetch.fetch</code> function and if it <em>succeeds</em> it runs the <code>req.json()</code>
+function. If that too is successful then the observable value <code>data</code> is updated to the resulting json data.</p><h2 id=node-modules>node-modules</h2><p>These are our dependencies, there&rsquo;s fable-core which is required by <a href=http://fsprojects.github.io/Fable/>Fable</a>, also included are <a href=https://www.npmjs.com/package/fable-fuse>fable-fuse</a> which
+are the F# bindings to the Fuse JavaScript libraries, and <a href=https://www.npmjs.com/package/fable-import-fetch>fable-import-fetch</a> which is the F# bindings for the
+<a href=https://developer.mozilla.org/en/docs/Web/API/Fetch_API>Fetch JavaScript API</a>.</p><hr><h1 id=running>Running</h1><p>To get a <strong>fable |> fuse</strong> application running all you have to do is run the build script <code>./build</code> which transpiles the
+F# files into JavaScript and then watches for any updates to the F# files. Running a Fuse application is also really easy,
+you can do this from within Atom via the <a href=https://atom.io/packages/fuse>plugin</a>, or sublime via that <a href=https://github.com/fusetools/Fuse.SublimePlugin>plugin</a>, or simply just run
+<code>fuse preview ./App/</code> from the project root.</p><hr><h1 id=any-problems>Any Problems?</h1><p>If you have any problems with the Yeoman generator for <strong>fable |> fuse</strong> then please log an issue on its
+GitHub repo: <a href=https://github.com/7sharp9/generator-fable-fuse>generator-fable-fuse</a>. If you have any issues with the fable-fuse module itself then please got an issue
+on its GitHub repo: <a href=https://github.com/7sharp9/fable-fuse>fable-fuse</a>.</p><p>If you have an improvements or suggestions then a PR is very welcome too!</p><hr><h1 id=whats-next>Whats next?</h1><p>If there is enough interest around using <strong>fable |> fuse</strong> I&rsquo;ll port some of the more intricate samples from the
+<a href=https://www.fusetools.com/examples>Fuse examples</a> over to <strong>fable |> fuse</strong> and also create a GitHub site with all the content relating to it.</p><p>Let me know what you think!!</p><p>Until next time!</p><hr></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/2016-06-03-light-the-fuse/>Light The Fuse</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/2017-04-11-i-want-to-tell-you-a-storyboard/>I want to tell you a storyboard</a></section></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

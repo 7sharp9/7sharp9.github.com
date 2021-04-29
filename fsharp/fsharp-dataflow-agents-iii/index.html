@@ -1,0 +1,61 @@
+<!doctype html><html><head><title>FSharp Dataflow agents III &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/fsharp-dataflow-agents-iii/>FSharp Dataflow agents III</a></h1><span class=post-date>Feb 20, 2012</span><div class=post-content><p>This will be the last post on rebuilding the <code>MailboxProcessor</code> using <a href=http://msdn.microsoft.com/en-us/devlabs/gg585582>TDF</a>,
+here&rsquo;s a quick discussion of the missing pieces&mldr;</p><p>First, lets start with the simple ones, these don&rsquo;t really require much discussion.</p><h3 id=defaulttimeout>DefaultTimeout</h3><pre><code>let mutable defaultTimeout = Timeout.Infinite
+
+member x.DefaultTimeout
+   with get() = defaultTimeout
+   and set(value) = defaultTimeout &lt;- value
+</code></pre><p>This simply provides a mutable property using <code>Timeout.Infinite</code> as a default setting.</p><h3 id=currentqueuelength>CurrentQueueLength</h3><pre><code>member x.CurrentQueueLength() = incomingMessages.Count 
+</code></pre><p>Another simple one, this methods uses into the underlying <code>BufferBlock</code> to extract its current queue length using its <code>Count</code> property.</p><h3 id=tryreceive>TryReceive</h3><pre><code>member x.TryReceive(?timeout) = 
+    let ts = TimeSpan.FromMilliseconds(float &lt;| defaultArg time out defaultTimeout)
+    Async.AwaitTask &lt;| incomingMessages.ReceiveAsync(ts)
+                           .ContinueWith(fun (tt:Task&lt;_&gt;) -&gt; 
+                                             if tt.IsCanceled || tt.IsFaulted then None
+                                             else Some tt.Result)
+</code></pre><p>Here we get a little help from <a href=http://msdn.microsoft.com/en-us/library/dd460717.aspx>TPL</a> to apply a continuation on completion
+using <code>ContinueWith</code>. We use a lambda to return either <code>None</code>, in a time out condition, or <code>Some tt.Result</code> when we successfully receive an item.</p><h3 id=trypostandreply>TryPostAndReply</h3><pre><code>type AsyncResultCell&lt;'a&gt;() = 
+    ...
+	member x.TryWaitResultSynchronously(timeout:int) = 
+	    //early completion check
+	    if source.Task.IsCompleted then 
+	        Some source.Task.Result
+	    //now force a wait for the task to complete
+	    else 
+	        if source.Task.Wait(timeout) then 
+	            Some source.Task.Result
+	        else None
+
+member x.TryPostAndReply(replyChannelMsg, ?timeout) :'Reply option = 
+    let timeout = defaultArg timeout defaultTimeout
+    let resultCell = AsyncResultCell&lt;_&gt;()
+    let msg = replyChannelMsg(new AsyncReplyChannel&lt;_&gt;(fun reply -&gt; resultCell.RegisterResult(reply)))
+    if incomingMessages.Post(msg) then
+        resultCell.TryWaitResultSynchronously(timeout)
+    else None
+</code></pre><p>Things get a little more interesting from here on in. Firstly we need to add a new synchronisation member to the <code>AsyncResultCell&lt;'a></code> type: <code>TryWaitResultSynchronously</code>. We again enlist the help of the TPL primitives to check for the early completion using <code>source.Task.IsCompleted</code> returning the result if it is there, otherwise we use the <code>Task</code> property&rsquo;s <code>Wait</code> method to check the item returns within the time out interval. In the usual manner, <code>Some source.Task.Result</code> is returned or <code>None</code> for a failure.</p><h3 id=postandreply>PostAndReply</h3><pre><code>member x.PostAndReply(replyChannelMsg, ?timeout) : 'Reply = 
+    match x.TryPostAndReply(replyChannelMsg, ?timeout = timeout) with
+    | None -&gt;  raise (TimeoutException(&quot;PostAndReply timed out&quot;))
+    | Some result -&gt; result
+</code></pre><p>This one wraps a call to <code>TryPostAndReply</code> with some pattern matching. In the event of a time out <code>None</code> is returned from <code>TryPostAndReply</code> in this instance we raise a <code>TimeoutException</code> otherwise we unwrap the result from the option using <code>| Some result -> result</code>.</p><h3 id=tryscan>TryScan</h3><pre><code>member x.TryScan((scanner: 'Msg -&gt; Async&lt;_&gt; option), timeout): Async&lt;_ option&gt; = 
+    let ts = TimeSpan.FromMilliseconds( float timeout)
+    let rec loopForMsg = async {
+        let! msg = Async.AwaitTask &lt;| incomingMessages.ReceiveAsync(ts)
+                                      .ContinueWith(fun (tt:Task&lt;_&gt;) -&gt; 
+                                          if tt.IsCanceled || tt.IsFaulted then None
+                                          else Some tt.Result)
+        match msg with
+        | Some m -&gt;  let res = scanner m
+                     match res with
+                     | None -&gt; return! loopForMsg
+                     | Some res -&gt; return! res 
+        | None -&gt; return None}                             
+    loopForMsg
+</code></pre><p>This one also uses the same <code>ContinueWith</code> functionality in the recursive <code>loopForMsg</code> function, perhaps some
+of these functions could extracted out and refactored but I prefer to keep the code like this to better explain what&rsquo;s going
+on. The the code is available on GitHub anyway so feel free to clean up any detritus and send me a pull request. Again we use pattern matching to keep calling the <code>loopForMsg</code> function until the result is returned or a time out occurs.</p><h3 id=scan>Scan</h3><pre><code>member x.Scan(scanner, timeout) =
+    async { let! res = x.TryScan(scanner, timeout)
+            match res with
+            | None -&gt; return raise(TimeoutException(&quot;Scan TimedOut&quot;))
+            | Some res -&gt; return res }
+</code></pre><p>Finally we have Scan, this is much like PostAndReply in that it just acts as a wrapper around <code>TryScan</code> making use of
+pattern matching throwing an exception on a time out.</p><p>That sums up the last few pieces, completing the TDF implementation of the <code>MailboxProcessor</code>. I think this series of posts has shown the elegance of F#&rsquo;s asynchronous workflows. The use of recursive functions and the compositional nature of asynchronous workflows really helps when you are doing this type of programming. It&rsquo;s also very nice on the eye, each section being clearly defined.</p><p>The more astute of you may have noticed something a little different. <code>Scan</code> and <code>TryScan</code> are destructive in this implementation, the unmatched messages are purged from the internal queue. Although I could have mirrored the same functionality of the <code>MailboxProcessor</code> by using an internal list to keep track of unmatched messages, this leads to performing checks during <code>Receive</code> and <code>Scan</code> and their derivatives to make sure that this list is used first when switching from <code>Scan</code> and <code>Receive</code> functionality.</p><p>I think the separation of concerns are a little fuzzy in the <code>MailboxProcessor</code>. The <code>scan</code> function seems like an after thought, even if you don&rsquo;t use <code>Scan</code> you still pay a price for it as there are numerous checks between the internal queue and the unmatched messages list. You can also run into issues while using <code>Scan</code> and <code>TryScan</code> that can result in out of memory conditions due to the inherent unbounded nature. I will briefly describe and explore the conditions that can lead to that in the next post. In the implementation presented here we can get bounded checking by passing in an optional <code>DataflowBlockOptions</code> and setting a value for the <code>BoundedCapacity</code> property.</p><p><strong>EDIT:</strong> The code for this series of articles is now available on GitHub: <a href=https://github.com/7sharp9/FSharpDataflow>FSharpDataflow</a></p><p>Until next time&mldr;</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/fsharp-dataflow-agents-ii/>F# Dataflow Agents Part II</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/black-scholes-taste-test/>Black-Scholes Taste Test</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/fsharp-dataflow-agents-iii/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

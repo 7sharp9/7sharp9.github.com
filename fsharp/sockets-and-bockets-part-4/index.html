@@ -1,0 +1,67 @@
+<!doctype html><html><head><title>Sockets and Bockets 4 &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/sockets-and-bockets-part-4/>Sockets and Bockets 4</a></h1><span class=post-date>Jan 28, 2011</span><div class=post-content><h2 id=welcome-to-part-4>Welcome to part 4</h2><p>If you were looking forward to some exciting new F# code this time your going
+to be disappointed, however if you are like me and like looking at graphs and
+stats and digging in deeper into the code then your going to enjoy this, lets
+get started&mldr;</p><p>I set up a 5 minute test with 50 clients connecting to the server with a 15ms
+interval between each one.  Once connected each client receives a 128 byte
+message from the server every 100ms so this will be a 500 messages per second
+test.  I am going to be using an excellent product called <a href=http://bit.ly/e4ToaO>YourKit Profilerfor .NET</a> it can do both memory and CPU profiling as
+well as displaying telemetry for things like thread count, stack contents,
+memory allocations etc.  It can be configured to be a lot less intrusive than
+a lot of other profilers and I have had a lot of success using it.  You can
+download a demo from their site using the link above.  I will be doing some
+other articles on using profiling and analysis tools later on so stay tuned
+for those too.  All of the graphs and information gathered in this post come
+from YourKits output during CPU and memory profiling.</p><p>Before we start here&rsquo;s a reminder of what the client code looks like, this is
+a simple test client using Brian&rsquo;s code as mentioned in
+<a href=http://7sharpnine.com/posts/sockets-and-bockets-1/>Part1</a> I have highlighted the lines that
+have changed below.</p><pre><code>    open System.Net
+    open System.Net.Sockets  
+    let quoteSize = 128  
+    type System.Net.Sockets.TcpClient with
+      member client.AsyncConnect(server, port, clientIndex) =
+        Async.FromBeginEnd(server, port,(client.BeginConnect : IPAddress * int * _ * _ -&gt; _), client.EndConnect)  
+    let clientRequestQuoteStream (clientIndex, server, port:int) =
+      async {
+        let client = new System.Net.Sockets.TcpClient()
+        do!  client.AsyncConnect(server,port, clientIndex)
+        let stream = client.GetStream()
+        let! header = stream.AsyncRead 1 // read header
+        while true do
+          let! bytes = stream.AsyncRead quoteSize
+          if Array.length bytes &lt;&gt; quoteSize then
+            printfn &quot;client incorrect checksum&quot;
+      }  
+    let myLock = new obj()  
+    let clientAsync clientIndex =
+      async {
+        do! Async.Sleep(clientIndex*15)
+        if clientIndex % 10 = 0 then
+          lock myLock (fun() -&gt; printfn &quot;%d clients...&quot; clientIndex)
+        try
+          do! clientRequestQuoteStream (clientIndex, IPAddress.Loopback, 10003)
+        with e -&gt;
+          printfn &quot;CLIENT %d ERROR: %A&quot; clientIndex e
+          //raise e
+      }  
+    Async.Parallel [ for i in 1 .. 50 -&gt; clientAsync i ]
+      |&gt; Async.Ignore
+      |&gt; Async.Start
+    System.Console.ReadKey() |&gt; ignore
+</code></pre><h2 id=cpu-and-threading-performance>CPU and threading performance</h2><p>First of all lets look at the CPU results from the <em>IAsync</em> pattern:</p><figure><img src=https://lh5.googleusercontent.com/-3H8-TiiB-VI/TwYhL2mvYsI/AAAAAAAABQI/z8dmiHBvTJE/mcnamara-cpu1.png></figure><p>Heres the same run from the SAEA pattern:</p><figure><img src=https://lh3.googleusercontent.com/-yGB2zdE3kGM/TwYhLPrUmLI/AAAAAAAABP8/Y6CIMWOi4Gk/Bocket-cpu2.png></figure><p>You can see that both the number of threads and the amount of CPU is a quite a
+lot less in the SAEA pattern.  The spike at the beginning is the allocation of
+buffers for the BocketPool.</p><p>Now lets move on to memory and garbage collection.</p><h2 id=memory-allocation>Memory Allocation</h2><p>Here&rsquo;s a graph of the heap and process memory allocation in the <strong>IAsync</strong>
+pattern, green is generation 0, blue is generation 1 and orange is the large
+object heap.  There&rsquo;s also red for generation 2 but the results are behind the
+others and they are only small 0,2 MB peaks at 5 to 15 second intervals.</p><figure><img src=https://lh3.googleusercontent.com/-PalohQxAkOg/TwYhL6hR5JI/AAAAAAAABQQ/NtCLYc43OZc/mcnamara-mem1.png></figure><p>Heres the same but for the SAEA pattern, there are red peaks every 10- 20
+second intervals of 0.2MB hidden under the others.</p><figure><img src=https://lh3.googleusercontent.com/-Nadz1nXQ7lg/TwYhLBXMvcI/AAAAAAAABQM/xCfuXkzkekM/Bocket-mem1.png></figure><p>As you can see the heap memory is around half the size and the process memory is 15MB less.</p><h2 id=memory-hotspots>Memory Hotspots</h2><p>Finally here&rsquo;s a couple of screen shot of the hot spots for memory allocations
+in both implementations</p><figure><img src=https://lh4.googleusercontent.com/-n3QWLgvNjq8/TwYhLX8cIZI/AAAAAAAABQA/LkeRno775Ew/s800/IAsync-hot.png><figcaption><h4>IAsync</h4></figcaption></figure><figure><img src=https://lh5.googleusercontent.com/-PSX_YUfxkgU/TwYhMr40DTI/AAAAAAAABQY/D8bgLS6kNwc/s800/SAEA-hot.png><figcaption><h4>SAEA</h4></figcaption></figure><p>You can clearly the <strong>IAsync</strong> allocations are not present in the SAEA
+implementation and there are 310,188 of them, that&rsquo;s 27% of the total garbage!</p><h2 id=final-thoughts>Final thoughts</h2><p>The SAEA pattern definitely cuts down on memory and CPU usage, yes it adds a
+lot of complexity but if your application is dealing with a very high volume
+of traffic or clients and you need optimal performance then I think its the
+way to go.</p><p>The optimisations don&rsquo;t stop there either, if you think about it the receive
+Bocketpool is not even used here, if we collapsed all of the BocketPools into
+a single contiguous store then we would use even less resources, this means we
+could support even more clients or throughput.  In a typical high volume
+scenario you are looking at doubling your throughput or number of client
+connections.</p><p>There&rsquo;s definitely a lot more or interesting things to explore in this area.</p><p>As usual any comments are welcome.</p><p>See you next time&mldr;</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/sockets-and-bockets-part-3/>Sockets and Bockets 3</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/pipeline-processing-1/>Pipeline processing 1</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/sockets-and-bockets-part-4/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>

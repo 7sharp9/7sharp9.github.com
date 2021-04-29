@@ -1,0 +1,40 @@
+<!doctype html><html><head><title>F# and Design principles - SOLID &#183; 7sharp9</title><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1"><meta name=generator content="Hugo 0.82.1"><link rel=stylesheet href=https://7sharp9.dev/css/vec.css><link rel=apple-touch-icon-precomposed sizes=144x144 href=/apple-touch-icon-144-precomposed.png><link rel="shortcut icon" href=/favicon.ico><link href rel=alternate type=application/rss+xml title=7sharp9></head><body><header><nav><ul><li class=pull-left><a href=https://7sharp9.dev/>/Home</a></li><li class=pull-left><a href=/about>/About</a></li><li class=pull-left><a href=/fsharp>/F#</a></li><li class=pull-left><a href=/running>/Running</a></li><li class=pull-left><a href=/elm>/Elm</a></li><li class=pull-right><a href><i class="fas fa-rss"></i></a></li></ul></nav></header><div class="content wide"><section class=post><h1 class=post-title><a href=https://7sharp9.dev/fsharp/fsharp_solid/>F# and Design principles - SOLID</a></h1><span class=post-date>Aug 22, 2011</span><div class=post-content><h2 id=solid-and-its-relevance-to-f>SOLID and its relevance to F#</h2><p>There has been an increasing amount of exposure for F# and functional
+programming lately.  If you come from an object-orientated background a change
+in mindset is required when working with functional programming, there is a
+lot of misinformation on functional languages and their relationship with
+object-orientated design. In this post we run quickly through SOLID to see if these object-orientated principles apply to F#, and if so, how.</p><p>This post assumes you are familiar with SOLID principles, if not here is a
+[link](<a href=http://en.wikipedia.org/wiki/SOLID_(object-oriented_design)>http://en.wikipedia.org/wiki/SOLID_(object-oriented_design)</a>. </p><p>Lets take a quick overview of what SOLID stands for:</p><h2 id=single-responsibility-principle>Single responsibility principle</h2><p>This is the notion that an object should have only a single responsibility.</p><p>An object-orientated program consists of layers of abstract classes with less
+abstract classes layered on top of ones that are more abstract.  Functional
+programming is similar, although abstractions are used throughout the design
+and are composed into a final solution.  Programming in F# naturally forms
+small succinct functions which should have a single purpose, so the single
+responsibility rule holds strong here.</p><h2 id=open-closed-principle>Open closed principle</h2><p>The notion that “software entities should be open for extension, but closed
+for modification”</p><p>This comes down to building abstractions via inheritance, and behavior changes
+through polymorphism.  Early on a decision must be made on which parts will
+change, and which will be fixed.   The open closed principal is geared towards
+languages where inheritance is a core concept, inheritance and polymorphism
+are not strongly used in F#, so this principle is very weak here.  Composition
+and Type augmentation are the core methods for extension in F#.</p><h2 id=liskov-substitution-principle>Liskov substitution principle</h2><p>Liskov substitution states “objects in a program should be replaceable with
+instances of their subtypes without altering the correctness of that program”.</p><p>This principle is all about inheritance - derived types preserving the
+specification of base types.  Functional languages like F# do not always use
+inheritance, it is used quite rarely and only in certain situations.   The
+idioms in the language like referential transparency lean strongly towards
+enforcing this principle.  Functional languages also have a heritage in
+mathematics and algebraic reasoning so referential transparency is key in this
+respect.</p><h2 id=interface-segregation-principle>Interface segregation principle</h2><p>The notion that “many client specific interfaces are better than one general
+purpose interface.”</p><p>If you are violating single responsibility then your interface will probably
+be bloated too with unnecessary properties and methods.  The same rule applies
+to F#, keep your interfaces modular and keep indifferent concepts separated.</p><h2 id=dependency-inversion-principle>Dependency inversion principle</h2><p>The notion that one should “Depend upon Abstractions. Do not depend upon
+concretions.”</p><ol><li>High-level modules should not depend on low-level modules. Both should depend on abstractions.</li><li>Abstractions should not depend upon details. Details should depend upon abstractions.
+Dependency inversion is often solved with concepts such as dependency
+injection; common techniques for this involves things like constructor
+injection and interface injection.  Inversion of control is often solved with
+a factory pattern or a service locator.  From a functional point of view,
+these containers and injection concepts can be solved with a simple higher
+order function, or hole-in-the-middle type pattern which are built right into
+the language.</li></ol><h2 id=summary>Summary</h2><p>So we can assume that in the functional paradigm:</p><ul><li>Types should have only a single responsibility.</li><li>The open closed principle doesn&rsquo;t apply in the majority of cases unless we are using an object-oriented approach.  With functional programming we favour functional composition and type augmentation.</li><li>The same can be said of the Liskov substitute principle, pure functions uphold this tenant via immutability and referential transparency.</li><li>Interface segregation also applies and idiomatic F#  produces small concise functions with modular interfaces with a separation of concerns.</li><li>Dependency inversion is not a relevant issue for F# as the language itself supports higher-order-functions to encapsulate this concept.
+So only the &lsquo;<strong>S</strong>&rsquo; and the &lsquo;<strong>I</strong>&rsquo; parts are relevant in functional
+programming.  The other tenants are not fully representative as they stand.
+We could probably explore the tenants of good functional design and form a
+quirky acronym in the process, but Ill leave that for another time.</li></ul><p>Until next time&mldr;</p></div></section><section class="pagination clearfix"><a class="btn previous" href=https://7sharp9.dev/fsharp/from-c-to-f-a-developers-perspective/>From C# to F#: A Developer's Perspective</a>
+<a class="btn next" href=https://7sharp9.dev/fsharp/fixing-a-hole/>Fixing a hole...</a></section><section id=disqus_thread class=disqus></section><script>var disqus_config=function(){this.page.url="https://7sharp9.dev/fsharp/fsharp_solid/"};(function(){var a=document,b=a.createElement('script');b.src='//7sharp9.disqus.com/embed.js',b.setAttribute('data-timestamp',+new Date),(a.head||a.body).appendChild(b)})()</script><noscript>Please enable JavaScript to view the <a href=https://disqus.com/?ref_noscript rel=nofollow>comments powered by Disqus.</a></noscript></div><footer><div class="footer-info pull-right">© 2021 Dave Thomas</div></footer><script src=https://7sharp9.dev/js/highlight.min.js></script><script>hljs.initHighlightingOnLoad()</script><script>(function(a,e,f,g,b,c,d){a.GoogleAnalyticsObject=b,a[b]=a[b]||function(){(a[b].q=a[b].q||[]).push(arguments)},a[b].l=1*new Date,c=e.createElement(f),d=e.getElementsByTagName(f)[0],c.async=1,c.src=g,d.parentNode.insertBefore(c,d)})(window,document,'script','//www.google-analytics.com/analytics.js','ga'),ga('create','UA-10152365-8','auto'),ga('send','pageview')</script></body></html>
