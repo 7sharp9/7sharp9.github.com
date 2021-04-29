@@ -11,3 +11,6 @@
 [submodule "ghostwriter"]
 	path = themes/ghostwriter
 	url = git@github.com:7sharp9/ghostwriter.git
+[submodule "themes/osprey-delight"]
+	path = themes/osprey-delight
+	url = https://github.com/kdevo/osprey-delight.git
